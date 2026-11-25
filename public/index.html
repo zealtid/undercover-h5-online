@@ -8,14 +8,25 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif; }
     .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 12px); }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.45); }
+      70% { box-shadow: 0 0 0 10px rgba(45, 212, 191, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0); }
+    }
+    .need-attention { animation: pulse-ring 1.4s ease-out 2; border-color: #2dd4bf !important; }
+    #overlay-root:empty { display: none; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex justify-center">
   <div id="app" class="w-full max-w-md min-h-screen bg-slate-900 flex flex-col relative shadow-2xl border-x border-slate-800"></div>
-  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-full bg-rose-600 text-white text-sm font-medium shadow-lg"></div>
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-[60] hidden px-4 py-2 rounded-full bg-rose-600 text-white text-sm font-medium shadow-lg"></div>
+  <div id="overlay-root" class="fixed inset-0 z-[70] flex items-center justify-center p-4"></div>
 
   <script>
     const AVATARS = ['🦊','🐼','🐯','🐸','🦁','🐨','🐙','🦄','🐶','🐱'];
+    const HOWTO_KEY = 'undercover_howto_seen_v1';
+    const PREFS_KEY = 'undercover_prefs';
+
     const state = {
       ws: null,
       connected: false,
@@ -27,9 +38,17 @@
       wordHidden: false,
       clockOffset: 0,
       selectedAvatar: AVATARS[Math.floor(Math.random() * AVATARS.length)],
+      avatarChosen: false,
       nickname: '',
       joinCodeInput: '',
-      activeTab: 'public' // 'public' | 'ghost'
+      activeTab: 'public',
+      soundOn: true,
+      highlightProfile: false,
+      prevPhase: null,
+      prevSpeakerId: null,
+      prevEliminatedId: null,
+      prevWinner: null,
+      speechCount: 0
     };
 
     try {
@@ -39,7 +58,26 @@
         state.reconnectToken = saved.reconnectToken || '';
         state.nickname = saved.nickname || '';
       }
+      const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+      if (prefs) {
+        if (prefs.nickname) state.nickname = prefs.nickname;
+        if (prefs.avatar && AVATARS.includes(prefs.avatar)) {
+          state.selectedAvatar = prefs.avatar;
+          state.avatarChosen = true;
+        }
+        if (typeof prefs.soundOn === 'boolean') state.soundOn = prefs.soundOn;
+      }
     } catch (_) {}
+
+    function savePrefs() {
+      try {
+        localStorage.setItem(PREFS_KEY, JSON.stringify({
+          nickname: state.nickname,
+          avatar: state.selectedAvatar,
+          soundOn: state.soundOn
+        }));
+      } catch (_) {}
+    }
 
     function saveSession() {
       try {
@@ -49,6 +87,7 @@
           nickname: state.nickname
         }));
       } catch (_) {}
+      savePrefs();
     }
 
     function clearSession(keepNickname = true) {
@@ -56,6 +95,11 @@
       state.reconnectToken = '';
       state.playerId = '';
       state.snapshot = null;
+      state.prevPhase = null;
+      state.prevSpeakerId = null;
+      state.prevEliminatedId = null;
+      state.prevWinner = null;
+      state.speechCount = 0;
       try {
         if (keepNickname && state.nickname) {
           localStorage.setItem('undercover_session', JSON.stringify({ nickname: state.nickname }));
@@ -68,9 +112,231 @@
     function showToast(msg, isInfo = false) {
       const el = document.getElementById('toast');
       el.textContent = msg;
-      el.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full text-white text-sm font-medium shadow-lg ${isInfo ? 'bg-teal-600' : 'bg-rose-600'}`;
+      el.className = `fixed top-4 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 rounded-full text-white text-sm font-medium shadow-lg ${isInfo ? 'bg-teal-600' : 'bg-rose-600'}`;
       clearTimeout(showToast._t);
       showToast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+      if (!isInfo) sfx.warn();
+    }
+
+    // ---------- Web Audio: BGM + SFX (no external files) ----------
+    const AudioFX = (() => {
+      let ctx = null;
+      let master = null;
+      let bgmGain = null;
+      let sfxGain = null;
+      let bgmTimer = null;
+      let step = 0;
+      let unlocked = false;
+
+      function ensure() {
+        if (!ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          ctx = new AC();
+          master = ctx.createGain();
+          master.gain.value = 1;
+          master.connect(ctx.destination);
+          bgmGain = ctx.createGain();
+          bgmGain.gain.value = 0.045;
+          bgmGain.connect(master);
+          sfxGain = ctx.createGain();
+          sfxGain.gain.value = 0.22;
+          sfxGain.connect(master);
+        }
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        unlocked = true;
+        return ctx;
+      }
+
+      function tone(freq, dur, type, gainNode, vol = 0.2, delay = 0) {
+        if (!state.soundOn || !ensure()) return;
+        const t0 = ctx.currentTime + delay;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type || 'sine';
+        osc.frequency.setValueAtTime(freq, t0);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(g);
+        g.connect(gainNode || sfxGain);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.02);
+      }
+
+      function chord(freqs, dur, vol = 0.04) {
+        freqs.forEach((f, i) => tone(f, dur, 'sine', bgmGain, vol, i * 0.01));
+      }
+
+      function startBgm() {
+        if (!state.soundOn || !ensure()) return;
+        if (bgmTimer) return;
+        const progression = [
+          [196, 247, 294],
+          [220, 277, 330],
+          [175, 220, 262],
+          [165, 208, 247]
+        ];
+        const tick = () => {
+          if (!state.soundOn || !ctx) return;
+          chord(progression[step % progression.length], 1.6, 0.035);
+          step++;
+        };
+        tick();
+        bgmTimer = setInterval(tick, 1800);
+      }
+
+      function stopBgm() {
+        if (bgmTimer) {
+          clearInterval(bgmTimer);
+          bgmTimer = null;
+        }
+      }
+
+      function setEnabled(on) {
+        state.soundOn = on;
+        savePrefs();
+        if (!on) stopBgm();
+        else if (unlocked) startBgm();
+      }
+
+      return {
+        unlock() {
+          ensure();
+          if (state.soundOn) startBgm();
+        },
+        setEnabled,
+        startBgm,
+        stopBgm,
+        click() { tone(660, 0.06, 'triangle', sfxGain, 0.12); },
+        join() { tone(523, 0.1, 'sine', sfxGain, 0.16); tone(784, 0.14, 'sine', sfxGain, 0.14, 0.08); },
+        turn() { tone(880, 0.12, 'square', sfxGain, 0.08); tone(1175, 0.18, 'square', sfxGain, 0.07, 0.1); },
+        vote() { tone(392, 0.15, 'triangle', sfxGain, 0.14); },
+        speech() { tone(494, 0.08, 'sine', sfxGain, 0.1); },
+        out() { tone(330, 0.2, 'sawtooth', sfxGain, 0.08); tone(220, 0.28, 'sawtooth', sfxGain, 0.07, 0.12); },
+        win() {
+          [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'sine', sfxGain, 0.12, i * 0.1));
+        },
+        lose() { tone(247, 0.35, 'triangle', sfxGain, 0.14); tone(185, 0.45, 'triangle', sfxGain, 0.12, 0.2); },
+        warn() { tone(220, 0.12, 'square', sfxGain, 0.06); },
+        phase() { tone(349, 0.1, 'sine', sfxGain, 0.1); tone(440, 0.12, 'sine', sfxGain, 0.1, 0.08); }
+      };
+    })();
+
+    const sfx = AudioFX;
+
+    function ensureProfileReady() {
+      const nick = (state.nickname || '').trim();
+      const needNick = !nick || nick.length < 2;
+      const needAvatar = !state.avatarChosen;
+      if (!needNick && !needAvatar) return true;
+      state.highlightProfile = true;
+      render();
+      if (needNick && needAvatar) showToast('请先填写昵称，并点选一个头像');
+      else if (needNick) showToast('请先设置昵称（至少 2 个字）');
+      else showToast('请先点选一个头像，方便好友认出你');
+      const nickEl = document.getElementById('inp-nick');
+      if (nickEl && needNick) setTimeout(() => nickEl.focus(), 50);
+      return false;
+    }
+
+    function renderHowtoOverlay() {
+      return `
+        <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" data-howto-dismiss></div>
+        <div class="relative w-full max-w-sm max-h-[85vh] overflow-y-auto rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl p-5 space-y-4">
+          <div class="text-center">
+            <div class="text-xs text-teal-300 font-medium mb-1">首次进入 · 30 秒看懂</div>
+            <h2 class="text-xl font-extrabold text-white">谁是卧底 · 怎么玩</h2>
+          </div>
+          <ol class="space-y-3 text-sm text-slate-300 list-decimal list-inside leading-relaxed">
+            <li><span class="text-white font-semibold">建房 / 加人</span>：房主分享 4 位房间号，3–10 人即可开局。</li>
+            <li><span class="text-white font-semibold">每人拿到一个词</span>：多数人是「平民词」，少数人是「卧底词」（接近但不一样）。</li>
+            <li><span class="text-white font-semibold">轮流描述</span>：用一句话形容自己的词，<span class="text-amber-300">不能直接说原词或原词里的字</span>。</li>
+            <li><span class="text-white font-semibold">投票出局</span>：找出最可疑的人；平票会进入 PK 补充发言。</li>
+            <li><span class="text-white font-semibold">胜负</span>：卧底全被找出 → 平民胜；卧底人数 ≥ 平民人数（如 1 卧底活到剩 2 人）→ 卧底胜。投错人会继续下一轮发言。</li>
+          </ol>
+          <div class="rounded-xl bg-slate-800/80 border border-slate-700 p-3 text-xs text-slate-400">
+            小提示：先设好昵称和头像再进房；右上角可开关背景音与提示音。
+          </div>
+          <button id="btn-howto-ok" class="w-full py-3 rounded-xl bg-teal-500 text-slate-950 font-bold text-sm">我学会了，开始玩</button>
+        </div>
+      `;
+    }
+
+    function showHowtoIfNeeded() {
+      try {
+        if (localStorage.getItem(HOWTO_KEY) === '1') return;
+      } catch (_) {}
+      const root = document.getElementById('overlay-root');
+      root.innerHTML = renderHowtoOverlay();
+      const close = () => {
+        try { localStorage.setItem(HOWTO_KEY, '1'); } catch (_) {}
+        root.innerHTML = '';
+        sfx.unlock();
+        sfx.click();
+      };
+      document.getElementById('btn-howto-ok').addEventListener('click', close);
+      root.querySelector('[data-howto-dismiss]')?.addEventListener('click', close);
+    }
+
+    function showHowtoManual() {
+      const root = document.getElementById('overlay-root');
+      root.innerHTML = renderHowtoOverlay();
+      const close = () => { root.innerHTML = ''; sfx.click(); };
+      document.getElementById('btn-howto-ok').addEventListener('click', close);
+      root.querySelector('[data-howto-dismiss]')?.addEventListener('click', close);
+    }
+
+    function soundToggleBtn() {
+      return `<button id="btn-sound" class="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300" title="背景音/提示音">${state.soundOn ? '🔊 音效开' : '🔇 音效关'}</button>`;
+    }
+
+    function bindSoundToggle() {
+      const btn = document.getElementById('btn-sound');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        sfx.unlock();
+        sfx.setEnabled(!state.soundOn);
+        sfx.click();
+        render();
+      });
+    }
+
+    function onGameSnapshot(s) {
+      const phase = s.phase;
+      const speakerId = s.currentSpeakerId;
+      const elimId = s.lastVoteSummary && s.lastVoteSummary.eliminatedId;
+      const winner = s.winner;
+
+      if (state.prevPhase && state.prevPhase !== phase) {
+        if (phase === 'SPEAKING' || phase === 'TIE_PK') sfx.phase();
+        else if (phase === 'VOTING') sfx.vote();
+        else if (phase === 'SETTLEMENT') {
+          if (winner === 'CIVILIAN' || winner === 'UNDERCOVER') {
+            const me = s.players.find(p => p.id === s.myId);
+            const iAmSpy = me && (me.role === 'UNDERCOVER' || me.role === 'BLANK');
+            const iWin = (winner === 'UNDERCOVER' && iAmSpy) || (winner === 'CIVILIAN' && me && !iAmSpy);
+            if (iWin) sfx.win(); else sfx.lose();
+          }
+        }
+      }
+
+      if (speakerId && speakerId === s.myId && speakerId !== state.prevSpeakerId &&
+          (phase === 'SPEAKING' || phase === 'TIE_PK')) {
+        sfx.turn();
+      }
+
+      if (elimId && elimId !== state.prevEliminatedId) sfx.out();
+
+      if (Array.isArray(s.speeches) && s.speeches.length > state.speechCount) {
+        if (state.speechCount > 0) sfx.speech();
+        state.speechCount = s.speeches.length;
+      }
+
+      state.prevPhase = phase;
+      state.prevSpeakerId = speakerId;
+      state.prevEliminatedId = elimId || null;
+      state.prevWinner = winner;
     }
 
     function connectWs() {
@@ -100,7 +366,10 @@
           state.reconnectToken = msg.reconnectToken;
           if (msg.categories) state.categories = msg.categories;
           saveSession();
+          sfx.join();
           if (msg.reconnected) showToast('已自动重连回房间', true);
+        } else if (msg.type === 'word:feedback:ack') {
+          showToast(msg.rating === 'up' ? '已点赞这组词' : '已点踩这组词', true);
         } else if (msg.type === 'session:left' || msg.type === 'session:kicked') {
           if (msg.type === 'session:kicked') showToast(msg.message || '你已被移出房间');
           clearSession(true);
@@ -108,6 +377,7 @@
         } else if (msg.type === 'room:snapshot') {
           state.snapshot = msg.data;
           state.clockOffset = (msg.data.serverNow || Date.now()) - Date.now();
+          onGameSnapshot(msg.data);
           render();
         }
       };
@@ -141,34 +411,48 @@
     }, 500);
 
     function renderHome() {
+      const nickNeed = state.highlightProfile && (!(state.nickname || '').trim() || (state.nickname || '').trim().length < 2);
+      const avatarNeed = state.highlightProfile && !state.avatarChosen;
       return `
-        <div class="p-6 flex-1 flex flex-col justify-center">
-          <div class="mb-8 text-center">
-            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/15 text-teal-300 text-xs font-medium mb-3">
-              3–10 人多端联机 · H5 文字版
-            </div>
+        <div class="px-4 pt-4 flex items-center justify-between">
+          <button id="btn-howto" class="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300">玩法</button>
+          ${soundToggleBtn()}
+        </div>
+        <div class="px-5 pb-6 flex-1 flex flex-col">
+          <div class="pt-6 pb-5 text-center">
             <h1 class="text-3xl font-extrabold tracking-tight text-white">谁是卧底</h1>
-            <p class="text-slate-400 text-sm mt-2">创建房间邀请好友，用一句话隐藏自己、找出卧底</p>
+            <p class="text-slate-400 text-sm mt-2">输入好友房间号，一起找出卧底</p>
           </div>
 
-          <div class="space-y-4 bg-slate-800/70 p-5 rounded-2xl border border-slate-700/80">
-            <div>
-              <label class="block text-xs text-slate-400 mb-1.5">选择头像</label>
-              <div class="flex flex-wrap gap-2">
-                ${AVATARS.map(a => `<button data-avatar="${a}" class="w-9 h-9 rounded-xl text-lg flex items-center justify-center border ${state.selectedAvatar === a ? 'bg-teal-600/30 border-teal-400' : 'bg-slate-900/70 border-slate-700'}">${a}</button>`).join('')}
+          <!-- 资料：紧凑一行 -->
+          <div class="mb-4 p-3.5 rounded-2xl bg-slate-800/50 border ${nickNeed || avatarNeed ? 'border-teal-500/50' : 'border-slate-700/70'} space-y-3">
+            <div class="flex items-center gap-2">
+              <span class="text-xs ${avatarNeed ? 'text-teal-300 font-semibold' : 'text-slate-500'}">头像${avatarNeed ? ' · 请点选' : ''}</span>
+              <div class="flex flex-wrap gap-1.5 flex-1 ${avatarNeed ? 'need-attention rounded-lg p-0.5' : ''}">
+                ${AVATARS.map(a => `<button data-avatar="${a}" class="w-8 h-8 rounded-lg text-base flex items-center justify-center border ${state.selectedAvatar === a ? 'bg-teal-600/30 border-teal-400' : 'bg-slate-900/70 border-slate-700'}">${a}</button>`).join('')}
               </div>
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1.5">你的昵称</label>
-              <input id="inp-nick" type="text" maxlength="12" value="${state.nickname}" placeholder="输入昵称（如：老王）" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:outline-none focus:border-teal-400" />
-            </div>
-            <button id="btn-create" class="w-full py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm transition">创建新房间</button>
-            <div class="flex items-center gap-2 pt-2 border-t border-slate-700/80">
-              <input id="inp-code" type="text" maxlength="6" value="${state.joinCodeInput}" placeholder="输入 4 位房间号" class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm font-mono tracking-widest focus:outline-none focus:border-teal-400" />
-              <button id="btn-join" class="px-5 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm">加入</button>
+              <label class="block text-xs mb-1 ${nickNeed ? 'text-teal-300 font-semibold' : 'text-slate-500'}">昵称${nickNeed ? ' · 必填' : ''}</label>
+              <input id="inp-nick" type="text" maxlength="12" value="${state.nickname.replace(/"/g, '&quot;')}" placeholder="输入昵称（如：老王）" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none focus:border-teal-400 ${nickNeed ? 'border-teal-400 need-attention' : 'border-slate-700'}" />
             </div>
           </div>
-          <p class="text-center text-xs text-slate-500 mt-6">${state.connected ? '● 已连接联机服务' : '○ 正在连接服务...'}</p>
+
+          <!-- 主操作：加入房间 -->
+          <div class="p-5 rounded-2xl bg-teal-500/10 border border-teal-500/35 space-y-3">
+            <div class="text-sm font-bold text-teal-200">加入房间</div>
+            <p class="text-xs text-slate-400 -mt-1">向房主要 4 位房间号</p>
+            <input id="inp-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" value="${state.joinCodeInput}" placeholder="····" class="w-full px-4 py-4 rounded-xl bg-slate-950 border border-teal-500/40 text-white text-center text-2xl font-mono tracking-[0.4em] focus:outline-none focus:border-teal-400 placeholder:tracking-[0.4em] placeholder:text-slate-600" />
+            <button id="btn-join" class="w-full py-3.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-base transition shadow-lg shadow-teal-900/30">进入房间</button>
+          </div>
+
+          <!-- 辅操作：创建房间 -->
+          <div class="mt-5 text-center">
+            <p class="text-xs text-slate-500 mb-2">没有房间号？自己当房主</p>
+            <button id="btn-create" class="w-full py-3 rounded-xl bg-transparent border border-slate-600 text-slate-300 hover:border-slate-400 hover:text-white text-sm font-medium transition">创建新房间</button>
+          </div>
+
+          <p class="text-center text-xs text-slate-500 mt-auto pt-8">${state.connected ? '● 已连接联机服务' : '○ 正在连接服务...'}</p>
         </div>
       `;
     }
@@ -185,7 +469,10 @@
             <div class="text-xs text-slate-400">房间号（分享给好友）</div>
             <div class="text-2xl font-mono font-bold tracking-widest text-teal-400">${s.roomCode}</div>
           </div>
-          <button id="btn-leave" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs">退出</button>
+          <div class="flex items-center gap-2">
+            ${soundToggleBtn()}
+            <button id="btn-leave" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs">退出</button>
+          </div>
         </div>
 
         <div class="p-4 flex-1 overflow-y-auto space-y-5">
@@ -257,16 +544,17 @@
       }[s.phase] || s.phase;
 
       return `
-        <!-- Top Status Bar -->
         <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
           <div class="flex items-center gap-2">
             <span class="px-2 py-0.5 rounded-md bg-teal-500/20 text-teal-300 text-xs font-semibold">${phaseLabel}</span>
             <span class="text-xs text-slate-400 font-mono">#${s.roomCode}</span>
           </div>
-          <span id="timer-badge" class="text-sm font-mono font-bold text-amber-400">${remain !== null ? remain + 's' : ''}</span>
+          <div class="flex items-center gap-2">
+            ${soundToggleBtn()}
+            <span id="timer-badge" class="text-sm font-mono font-bold text-amber-400">${remain !== null ? remain + 's' : ''}</span>
+          </div>
         </div>
 
-        <!-- My Secret Word Card -->
         <div class="px-4 py-3 bg-slate-800/40 border-b border-slate-800 flex items-center justify-between">
           <div>
             <div class="text-[11px] text-slate-400">你的词语（仅自己可见）</div>
@@ -277,7 +565,6 @@
           <button id="btn-toggle-word" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 border border-slate-700">${state.wordHidden ? '显示词语' : '隐藏防窥'}</button>
         </div>
 
-        <!-- Players Strip -->
         <div class="px-4 py-2.5 border-b border-slate-800 flex gap-2 overflow-x-auto">
           ${s.players.map(p => {
             const active = p.id === s.currentSpeakerId;
@@ -294,7 +581,6 @@
           }).join('')}
         </div>
 
-        <!-- Main Feed / Voting / Settlement -->
         <div class="flex-1 overflow-y-auto p-4 space-y-3">
           ${s.lastVoteSummary ? `<div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">${s.lastVoteSummary.note}</div>` : ''}
 
@@ -308,6 +594,18 @@
               </div>
               <div class="text-left pt-2 space-y-1.5">
                 ${s.players.map(p => `<div class="flex justify-between text-xs px-2 py-1 rounded bg-slate-900/50"><span>${p.seat}号 ${p.nickname}</span><span class="${p.role === 'UNDERCOVER' ? 'text-amber-400 font-bold' : (p.role === 'BLANK' ? 'text-indigo-300' : 'text-teal-300')}">${p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')} · ${p.word || '无词'}</span></div>`).join('')}
+              </div>
+              <div class="pt-3 mt-1 border-t border-teal-500/20">
+                <div class="text-xs text-slate-400 mb-2">这组词好玩吗？给词库一点反馈</div>
+                <div class="flex gap-2 justify-center">
+                  <button data-word-fb="up" class="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition ${s.myWordFeedback === 'up' ? 'bg-teal-500 text-slate-950 border-teal-400' : 'bg-slate-900/70 text-teal-200 border-slate-600 hover:border-teal-400'}">
+                    👍 点赞${s.wordFeedbackStats && s.wordFeedbackStats.up ? ` · ${s.wordFeedbackStats.up}` : ''}
+                  </button>
+                  <button data-word-fb="down" class="flex-1 py-2.5 rounded-xl text-sm font-semibold border transition ${s.myWordFeedback === 'down' ? 'bg-rose-500 text-white border-rose-400' : 'bg-slate-900/70 text-rose-200 border-slate-600 hover:border-rose-400'}">
+                    👎 点踩${s.wordFeedbackStats && s.wordFeedbackStats.down ? ` · ${s.wordFeedbackStats.down}` : ''}
+                  </button>
+                </div>
+                ${s.myWordFeedback ? `<p class="text-[11px] text-slate-500 mt-2">已记录你的反馈${s.myWordFeedback === 'up' ? '（赞）' : '（踩）'}，可改选</p>` : `<p class="text-[11px] text-slate-500 mt-2">每人可评一次，可改选</p>`}
               </div>
             </div>
           ` : ''}
@@ -354,7 +652,6 @@
           `}
         </div>
 
-        <!-- Bottom Action Bar -->
         <div class="p-3 border-t border-slate-800 bg-slate-950/80 safe-bottom">
           ${s.phase === 'SETTLEMENT' ? (
             s.hostId === s.myId
@@ -384,19 +681,45 @@
       const app = document.getElementById('app');
       if (!state.snapshot) {
         app.innerHTML = renderHome();
+        bindSoundToggle();
+        document.getElementById('btn-howto')?.addEventListener('click', () => { sfx.unlock(); showHowtoManual(); });
         app.querySelectorAll('[data-avatar]').forEach(btn => {
-          btn.addEventListener('click', () => { state.selectedAvatar = btn.dataset.avatar; render(); });
+          btn.addEventListener('click', () => {
+            sfx.unlock();
+            sfx.click();
+            state.selectedAvatar = btn.dataset.avatar;
+            state.avatarChosen = true;
+            state.highlightProfile = false;
+            savePrefs();
+            render();
+          });
         });
         const nickEl = document.getElementById('inp-nick');
         const codeEl = document.getElementById('inp-code');
-        nickEl.addEventListener('input', e => { state.nickname = e.target.value; });
-        codeEl.addEventListener('input', e => { state.joinCodeInput = e.target.value; });
-        document.getElementById('btn-create').addEventListener('click', () => {
-          send({ type: 'room:create', nickname: state.nickname, avatar: state.selectedAvatar });
+        nickEl.addEventListener('input', e => {
+          state.nickname = e.target.value;
+          if ((state.nickname || '').trim().length >= 2) state.highlightProfile = false;
+          savePrefs();
         });
-        document.getElementById('btn-join').addEventListener('click', () => {
+        codeEl.addEventListener('input', e => {
+          state.joinCodeInput = e.target.value.replace(/\D/g, '').slice(0, 4);
+          if (e.target.value !== state.joinCodeInput) e.target.value = state.joinCodeInput;
+        });
+        const doJoin = () => {
+          sfx.unlock();
+          if (!ensureProfileReady()) return;
           if (!state.joinCodeInput.trim()) return showToast('请输入房间号');
-          send({ type: 'room:join', roomCode: state.joinCodeInput.trim(), nickname: state.nickname, avatar: state.selectedAvatar });
+          if (!/^\d{4}$/.test(state.joinCodeInput.trim())) return showToast('房间号须为 4 位数字');
+          sfx.click();
+          send({ type: 'room:join', roomCode: state.joinCodeInput.trim(), nickname: state.nickname.trim(), avatar: state.selectedAvatar });
+        };
+        document.getElementById('btn-join').addEventListener('click', doJoin);
+        codeEl.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+        document.getElementById('btn-create').addEventListener('click', () => {
+          sfx.unlock();
+          if (!ensureProfileReady()) return;
+          sfx.click();
+          send({ type: 'room:create', nickname: state.nickname.trim(), avatar: state.selectedAvatar });
         });
         return;
       }
@@ -404,15 +727,16 @@
       const s = state.snapshot;
       if (s.phase === 'LOBBY') {
         app.innerHTML = renderLobby(s);
-        document.getElementById('btn-leave').addEventListener('click', () => send({ type: 'room:leave' }));
+        bindSoundToggle();
+        document.getElementById('btn-leave').addEventListener('click', () => { sfx.click(); send({ type: 'room:leave' }); });
         app.querySelectorAll('[data-kick]').forEach(b => {
-          b.addEventListener('click', () => send({ type: 'room:kick', targetPlayerId: b.dataset.kick }));
+          b.addEventListener('click', () => { sfx.click(); send({ type: 'room:kick', targetPlayerId: b.dataset.kick }); });
         });
         app.querySelectorAll('[data-cfg-spy]').forEach(b => {
-          b.addEventListener('click', () => send({ type: 'room:config', config: { spyCount: Number(b.dataset.cfgSpy) } }));
+          b.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { spyCount: Number(b.dataset.cfgSpy) } })); });
         });
         const blankBtn = document.getElementById('btn-cfg-blank');
-        if (blankBtn) blankBtn.addEventListener('click', () => send({ type: 'room:config', config: { blankCount: s.config.blankCount === 1 ? 0 : 1 } }));
+        if (blankBtn) blankBtn.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { blankCount: s.config.blankCount === 1 ? 0 : 1 } }); });
         const catSel = document.getElementById('sel-cat');
         if (catSel) catSel.addEventListener('change', e => send({ type: 'room:config', config: { category: e.target.value } }));
         const startBtn = document.getElementById('btn-start');
@@ -423,15 +747,22 @@
             startBtn.className = 'w-full py-3.5 rounded-xl font-bold text-sm bg-slate-800 text-slate-500';
             startBtn.textContent = `还有 ${offlineCount} 人离线，无法开始`;
           }
-          startBtn.addEventListener('click', () => send({ type: 'game:start' }));
+          startBtn.addEventListener('click', () => { sfx.click(); send({ type: 'game:start' }); });
         }
         const readyBtn = document.getElementById('btn-ready');
-        if (readyBtn) readyBtn.addEventListener('click', () => send({ type: 'player:ready' }));
+        if (readyBtn) readyBtn.addEventListener('click', () => { sfx.click(); send({ type: 'player:ready' }); });
       } else {
         app.innerHTML = renderGame(s);
+        bindSoundToggle();
         document.getElementById('btn-toggle-word').addEventListener('click', () => { state.wordHidden = !state.wordHidden; render(); });
+        app.querySelectorAll('[data-word-fb]').forEach(b => {
+          b.addEventListener('click', () => {
+            sfx.click();
+            send({ type: 'word:feedback', rating: b.dataset.wordFb });
+          });
+        });
         app.querySelectorAll('[data-vote]').forEach(b => {
-          b.addEventListener('click', () => send({ type: 'vote:cast', targetPlayerId: b.dataset.vote }));
+          b.addEventListener('click', () => { sfx.vote(); send({ type: 'vote:cast', targetPlayerId: b.dataset.vote }); });
         });
         app.querySelectorAll('[data-tab]').forEach(b => {
           b.addEventListener('click', () => { state.activeTab = b.dataset.tab; render(); });
@@ -453,12 +784,17 @@
           ghostInp.addEventListener('keydown', e => { if (e.key === 'Enter') doGhost(); });
         }
         const resetBtn = document.getElementById('btn-reset');
-        if (resetBtn) resetBtn.addEventListener('click', () => send({ type: 'game:reset' }));
+        if (resetBtn) resetBtn.addEventListener('click', () => { sfx.click(); send({ type: 'game:reset' }); });
       }
     }
 
+    // First user gesture anywhere unlocks audio (browser autoplay policy)
+    const unlockOnce = () => { sfx.unlock(); document.removeEventListener('pointerdown', unlockOnce); };
+    document.addEventListener('pointerdown', unlockOnce);
+
     render();
     connectWs();
+    showHowtoIfNeeded();
   </script>
 </body>
 </html>

@@ -120,10 +120,22 @@ class UndercoverRoom {
     // Settlement
     this.winner = null;       // 'CIVILIAN' | 'UNDERCOVER' | null
     this.winReason = '';
+    // Word-pair feedback at settlement: playerId -> 'up' | 'down'
+    this.wordFeedbacks = {};
 
     // Timer
     this.phaseEndsAt = null;
     this._timerHandle = null;
+  }
+
+  getWordFeedbackStats() {
+    let up = 0;
+    let down = 0;
+    Object.values(this.wordFeedbacks).forEach(v => {
+      if (v === 'up') up += 1;
+      else if (v === 'down') down += 1;
+    });
+    return { up, down };
   }
 
   touch() {
@@ -369,6 +381,7 @@ class UndercoverRoom {
     this.lastVoteSummary = null;
     this.winner = null;
     this.winReason = '';
+    this.wordFeedbacks = {};
 
     this.beginSpeakingRound(null);
     return { ok: true };
@@ -657,6 +670,7 @@ class UndercoverRoom {
   checkWinCondition() {
     const alive = this.players.filter(p => p.alive);
     const aliveSpies = alive.filter(p => p.role === ROLES.UNDERCOVER || p.role === ROLES.BLANK);
+    const aliveCivilians = alive.filter(p => p.role === ROLES.CIVILIAN);
 
     // 1. All undercovers (and blanks) eliminated -> Civilians win
     if (aliveSpies.length === 0) {
@@ -668,12 +682,13 @@ class UndercoverRoom {
       return { winner: 'UNDERCOVER', reason: '3 人局平民投错人，卧底成功潜伏获胜！' };
     }
 
-    // 3. 4-10 player standard threshold: aliveTotal <= aliveSpies + 2
-    // (1 spy surviving to 3 players, or 2 spies surviving to 4 players)
-    if (this.players.length >= 4 && alive.length <= aliveSpies.length + 2) {
+    // 3. 4-10 players: undercover side wins only when spies(+blank) >= civilians
+    // e.g. 1 卧底需存活到还剩 2 人；2 卧底存活到还剩 4 人（2v2）才获胜。
+    // 这样 4 人局投错一人后会进入下一轮发言，而不是立刻结束。
+    if (this.players.length >= 4 && aliveSpies.length >= aliveCivilians.length) {
       return {
         winner: 'UNDERCOVER',
-        reason: `场上仅剩 ${alive.length} 人且仍有 ${aliveSpies.length} 名卧底存活，卧底阵营获胜！`
+        reason: `场上卧底阵营 ${aliveSpies.length} 人 ≥ 平民 ${aliveCivilians.length} 人，卧底潜伏成功！`
       };
     }
 
@@ -721,6 +736,46 @@ class UndercoverRoom {
     return { ok: true };
   }
 
+  /**
+   * Settlement-only: rate the current word pair (thumbs up / down).
+   * Players may switch their vote; same rating again is a no-op.
+   */
+  submitWordFeedback(playerId, rating) {
+    this.touch();
+    if (this.phase !== PHASES.SETTLEMENT) {
+      return { ok: false, error: '仅结算阶段可评价词组' };
+    }
+    if (!this.players.find(p => p.id === playerId)) {
+      return { ok: false, error: '玩家不存在' };
+    }
+    if (rating !== 'up' && rating !== 'down') {
+      return { ok: false, error: '请选择点赞或点踩' };
+    }
+    if (!this.currentWordPair) {
+      return { ok: false, error: '本局词组不可用' };
+    }
+    const prev = this.wordFeedbacks[playerId] || null;
+    if (prev === rating) {
+      return {
+        ok: true,
+        unchanged: true,
+        rating,
+        stats: this.getWordFeedbackStats(),
+        wordPair: this.currentWordPair
+      };
+    }
+    this.wordFeedbacks[playerId] = rating;
+    this.emitUpdate();
+    return {
+      ok: true,
+      unchanged: false,
+      rating,
+      prevRating: prev,
+      stats: this.getWordFeedbackStats(),
+      wordPair: this.currentWordPair
+    };
+  }
+
   resetToLobby(actorId) {
     this.touch();
     if (actorId !== this.hostId) {
@@ -735,6 +790,7 @@ class UndercoverRoom {
     this.votes = {};
     this.pkCandidates = [];
     this.lastVoteSummary = null;
+    this.wordFeedbacks = {};
     this.players.forEach(p => {
       p.alive = true;
       p.role = null;
@@ -775,6 +831,12 @@ class UndercoverRoom {
       myWord: viewer && this.phase !== PHASES.LOBBY ? viewer.word : null,
       myRole: canSeeAllSecrets && viewer ? viewer.role : null,
       wordReveal: canSeeAllSecrets ? this.currentWordPair : null,
+      myWordFeedback: viewer && this.phase === PHASES.SETTLEMENT
+        ? (this.wordFeedbacks[viewer.id] || null)
+        : null,
+      wordFeedbackStats: this.phase === PHASES.SETTLEMENT
+        ? this.getWordFeedbackStats()
+        : { up: 0, down: 0 },
       players: this.players.map(p => ({
         id: p.id,
         seat: p.seat,

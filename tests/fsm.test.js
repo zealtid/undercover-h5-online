@@ -154,7 +154,44 @@ function runTests() {
   assert.match(startOffline.error, /离线/);
   roomKick.clearTimer();
 
-  console.log('ALL FSM TESTS PASSED (3p, 6p, taboo, projection, PK, reconnect, abstain-PK, voice-ban, kick)');
+  // Test 6: 4-player wrong vote must continue to next speaking round (not end at 3 alive)
+  const roomContinue = new UndercoverRoom('C401');
+  for (let i = 1; i <= 4; i++) roomContinue.addPlayer({ nickname: `C${i}` });
+  roomContinue.players.slice(1).forEach(p => roomContinue.toggleReady(p.id));
+  assert.strictEqual(roomContinue.startGame(roomContinue.hostId).ok, true);
+  while (roomContinue.phase === PHASES.SPEAKING) {
+    roomContinue.submitSpeech(roomContinue.currentSpeakerId, { content: `描${roomContinue.turnIndex}` });
+  }
+  const civs4 = roomContinue.players.filter(p => p.role === ROLES.CIVILIAN);
+  const targetCiv = civs4[0];
+  roomContinue.players.filter(p => p.id !== targetCiv.id).forEach(p => roomContinue.castVote(p.id, targetCiv.id));
+  roomContinue.castVote(targetCiv.id, civs4[1].id);
+  assert.strictEqual(roomContinue.phase, PHASES.SPEAKING, '4p after wrong elim should continue speaking');
+  assert.strictEqual(roomContinue.roundNumber, 2);
+  assert.strictEqual(roomContinue.winner, null);
+  assert.strictEqual(roomContinue.players.filter(p => p.alive).length, 3);
+  // Second wrong elim -> 2 alive with 1 spy -> undercover wins
+  while (roomContinue.phase === PHASES.SPEAKING) {
+    roomContinue.submitSpeech(roomContinue.currentSpeakerId, { content: `二${roomContinue.turnIndex}` });
+  }
+  const aliveNow = roomContinue.players.filter(p => p.alive);
+  const spyLeft = aliveNow.find(p => p.role === ROLES.UNDERCOVER);
+  const civLeft = aliveNow.filter(p => p.role === ROLES.CIVILIAN);
+  const elimCiv = civLeft[0];
+  aliveNow.filter(p => p.id !== elimCiv.id).forEach(p => roomContinue.castVote(p.id, elimCiv.id));
+  roomContinue.castVote(elimCiv.id, spyLeft.id);
+  assert.strictEqual(roomContinue.phase, PHASES.SETTLEMENT);
+  assert.strictEqual(roomContinue.winner, 'UNDERCOVER');
+  const fb = roomContinue.submitWordFeedback(spyLeft.id, 'up');
+  assert.strictEqual(fb.ok, true);
+  assert.strictEqual(roomContinue.getWordFeedbackStats().up, 1);
+  assert.strictEqual(roomContinue.getPlayerSnapshot(spyLeft.id).myWordFeedback, 'up');
+  assert.strictEqual(roomContinue.submitWordFeedback(spyLeft.id, 'down').ok, true);
+  assert.strictEqual(roomContinue.getWordFeedbackStats().down, 1);
+  assert.strictEqual(roomContinue.getWordFeedbackStats().up, 0);
+  roomContinue.clearTimer();
+
+  console.log('ALL FSM TESTS PASSED (3p, 6p, taboo, projection, PK, reconnect, abstain-PK, voice-ban, kick, 4p-continue, word-fb)');
 }
 
 runTests();

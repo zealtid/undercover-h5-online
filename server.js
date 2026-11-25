@@ -17,6 +17,15 @@ const RATE_WINDOW_MS = 60 * 1000;
 const RATE_CREATE_PER_MIN = Number(process.env.RATE_CREATE_PER_MIN) || 8;
 const RATE_MSG_PER_MIN = Number(process.env.RATE_MSG_PER_MIN) || 120;
 const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const FEEDBACK_FILE = path.join(__dirname, 'data', 'word-feedback.jsonl');
+
+function logWordFeedback(entry) {
+  try {
+    const dir = path.dirname(FEEDBACK_FILE);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFile(FEEDBACK_FILE, JSON.stringify(entry) + '\n', () => {});
+  } catch (_) {}
+}
 
 // Active rooms: roomCode -> UndercoverRoom
 const rooms = new Map();
@@ -229,6 +238,24 @@ function handleMessage(socket, rawText) {
     case 'game:reset':
       res = room.resetToLobby(meta.playerId);
       break;
+    case 'word:feedback': {
+      res = room.submitWordFeedback(meta.playerId, msg.rating);
+      if (res.ok && !res.unchanged && res.wordPair) {
+        logWordFeedback({
+          ts: Date.now(),
+          roomCode: room.roomCode,
+          playerId: meta.playerId,
+          rating: res.rating,
+          wordId: res.wordPair.id,
+          category: res.wordPair.category,
+          civilianWord: res.wordPair.civilianWord,
+          undercoverWord: res.wordPair.undercoverWord,
+          stats: res.stats
+        });
+        sendJson(socket, { type: 'word:feedback:ack', rating: res.rating, stats: res.stats });
+      }
+      break;
+    }
     case 'room:kick': {
       const targetId = msg.targetPlayerId;
       const kickedSock = findSocketByPlayer(room.roomCode, targetId);
