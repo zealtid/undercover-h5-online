@@ -123,6 +123,13 @@ class UndercoverRoom {
     this.winReason = '';
     // Word-pair feedback at settlement: playerId -> 'up' | 'down'
     this.wordFeedbacks = {};
+    // Optional DB persistence: UUID generated at startGame, reused on retry
+    this.gameId = null;
+    this.gameStartedAt = null;
+    this.gameEndedAt = null;
+    this._dbSettlementAttempted = false;
+    this._dbSettlementOk = false;
+    this._dbSettlementPromise = null;
 
     // Timer
     this.phaseEndsAt = null;
@@ -359,6 +366,12 @@ class UndercoverRoom {
 
     this.config = sanitizeConfig(this.config, this.players.length);
     this.currentWordPair = this.pickWordPair();
+    // Stable UUID for optional DB write; must stay the same across persist retries
+    this.gameId = crypto.randomUUID();
+    this.gameStartedAt = Date.now();
+    this._dbSettlementAttempted = false;
+    this._dbSettlementOk = false;
+    this._dbSettlementPromise = null;
 
     // Assign roles
     const n = this.players.length;
@@ -715,7 +728,43 @@ class UndercoverRoom {
     this.winner = winner;
     this.winReason = reason;
     this.currentSpeakerId = null;
+    this.gameEndedAt = Date.now();
     this.emitUpdate();
+  }
+
+  /**
+   * Payload for optional DB settlement write. Null if not settled / missing ids.
+   */
+  getSettlementRecord() {
+    if (this.phase !== PHASES.SETTLEMENT || !this.gameId || !this.currentWordPair) {
+      return null;
+    }
+    if (this.winner !== 'CIVILIAN' && this.winner !== 'UNDERCOVER') {
+      return null;
+    }
+    return {
+      gameId: this.gameId,
+      roomCode: this.roomCode,
+      winner: this.winner,
+      winReason: this.winReason || '',
+      wordPairId: this.currentWordPair.id,
+      categoryName: this.currentWordPair.category,
+      civilianWord: this.currentWordPair.civilianWord,
+      undercoverWord: this.currentWordPair.undercoverWord,
+      spyCount: this.config.spyCount,
+      blankCount: this.config.blankCount,
+      playerCount: this.players.length,
+      startedAt: new Date(this.gameStartedAt || this.createdAt),
+      endedAt: new Date(this.gameEndedAt || Date.now()),
+      players: this.players.map((p) => ({
+        id: p.id,
+        seat: p.seat,
+        nickname: p.nickname,
+        role: p.role,
+        word: p.word == null ? '' : String(p.word),
+        alive: Boolean(p.alive)
+      }))
+    };
   }
 
   sendGhostMessage(playerId, content) {
@@ -796,6 +845,12 @@ class UndercoverRoom {
     this.pkCandidates = [];
     this.lastVoteSummary = null;
     this.wordFeedbacks = {};
+    this.gameId = null;
+    this.gameStartedAt = null;
+    this.gameEndedAt = null;
+    this._dbSettlementAttempted = false;
+    this._dbSettlementOk = false;
+    this._dbSettlementPromise = null;
     this.players.forEach(p => {
       p.alive = true;
       p.role = null;

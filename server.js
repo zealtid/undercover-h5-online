@@ -8,6 +8,12 @@ const path = require('path');
 const crypto = require('crypto');
 const { UndercoverRoom } = require('./engine/fsm');
 const { CATEGORIES } = require('./engine/wordBank');
+const {
+  initDb,
+  getStatus: getDbStatus,
+  persistGameSettlement,
+  upsertWordFeedback
+} = require('./engine/db');
 
 const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT) || 3000;
@@ -115,6 +121,38 @@ function broadcastRoom(room) {
   }
 }
 
+/** After in-memory settlement, try one optional DB write; failures only log. */
+function maybePersistSettlement(room) {
+  if (!room || room.phase !== 'SETTLEMENT' || room._dbSettlementAttempted) return;
+  const record = room.getSettlementRecord();
+  if (!record) return;
+  room._dbSettlementAttempted = true;
+  room._dbSettlementOk = false;
+  room._dbSettlementPromise = persistGameSettlement(record)
+    .then((res) => {
+      if (res && res.ok) {
+        room._dbSettlementOk = true;
+        return res;
+      }
+      // Allow a later state-change (e.g. feedback) to retry once disk is back
+      if (res && !res.skipped) {
+        room._dbSettlementAttempted = false;
+        console.warn('[db] settlement persist failed for room', room.roomCode);
+      }
+      return res;
+    })
+    .catch((err) => {
+      room._dbSettlementAttempted = false;
+      console.warn('[db] settlement persist error:', err && err.message ? err.message : 'unknown');
+      return { ok: false, error: err && err.message ? err.message : 'unknown' };
+    });
+}
+
+function onRoomStateChange(room) {
+  broadcastRoom(room);
+  maybePersistSettlement(room);
+}
+
 function createUniqueRoom() {
   if (rooms.size >= MAX_ROOMS) {
     return { ok: false, error: '服务器房间已满，请稍后再试' };
@@ -128,7 +166,7 @@ function createUniqueRoom() {
       return { ok: false, error: '暂时无法分配房间号，请重试' };
     }
   } while (rooms.has(code));
-  const room = new UndercoverRoom(code, broadcastRoom);
+  const room = new UndercoverRoom(code, onRoomStateChange);
   rooms.set(code, room);
   return { ok: true, room };
 }
@@ -253,6 +291,25 @@ function handleMessage(socket, rawText) {
           undercoverWord: res.wordPair.undercoverWord,
           stats: res.stats
         });
+        // Wait for settlement row when possible so game_id FK does not race
+        void (async () => {
+          if (room._dbSettlementPromise) {
+            try {
+              await room._dbSettlementPromise;
+            } catch (_) {}
+          }
+          await upsertWordFeedback({
+            playerId: meta.playerId,
+            wordPairId: res.wordPair.id,
+            rating: res.rating,
+            roomCode: room.roomCode,
+            gameId: room._dbSettlementOk ? room.gameId : null,
+            civilianWord: res.wordPair.civilianWord,
+            undercoverWord: res.wordPair.undercoverWord
+          });
+        })().catch((err) => {
+          console.warn('[db] feedback upsert error:', err && err.message ? err.message : 'unknown');
+        });
         sendJson(socket, { type: 'word:feedback:ack', rating: res.rating, stats: res.stats });
       }
       break;
@@ -364,6 +421,7 @@ const server = http.createServer((req, res) => {
   const url = (req.url || '/').split('?')[0];
 
   if (url === '/health') {
+    const db = getDbStatus();
     res.writeHead(200, {
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store'
@@ -373,7 +431,11 @@ const server = http.createServer((req, res) => {
       rooms: rooms.size,
       clients: clients.size,
       maxRooms: MAX_ROOMS,
-      uptime: Math.floor(process.uptime())
+      uptime: Math.floor(process.uptime()),
+      db: {
+        enabled: db.enabled,
+        configured: db.configured
+      }
     }));
   }
 
@@ -491,6 +553,15 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => {
     console.log(`Undercover H5 Online Server running at http://${HOST}:${PORT} (HOST=${HOST}, PORT=${PORT})`);
     console.log(`Limits: maxRooms=${MAX_ROOMS}, msgBytes=${MAX_MSG_BYTES}, create/min=${RATE_CREATE_PER_MIN}`);
+    // Optional DB: probe after listen so rooms stay available if PG is down
+    void initDb().then((ok) => {
+      if (!ok) {
+        const st = getDbStatus();
+        if (!st.configured) {
+          console.log('[db] UNDERCOVER_PG* not set; memory-only mode');
+        }
+      }
+    });
   });
 }
 
