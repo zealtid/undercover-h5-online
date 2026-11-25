@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>谁是卧底 · 多端联机 H5</title>
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="/shared.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif; }
     .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 12px); }
@@ -29,7 +30,11 @@
       selectedAvatar: AVATARS[Math.floor(Math.random() * AVATARS.length)],
       nickname: '',
       joinCodeInput: '',
-      activeTab: 'public' // 'public' | 'ghost'
+      activeTab: 'public', // 'public' | 'ghost'
+      soundEnabled: true,
+      audioCtx: null,
+      audioUnlockWarned: false,
+      audioCueState: { lastKey: null }
     };
 
     try {
@@ -37,8 +42,10 @@
       if (saved) {
         state.roomCode = saved.roomCode || '';
         state.reconnectToken = saved.reconnectToken || '';
-        state.nickname = saved.nickname || '';
+        const savedNick = UndercoverShared.validateNickname(saved.nickname);
+        state.nickname = savedNick.ok ? savedNick.value : '';
       }
+      state.soundEnabled = localStorage.getItem('undercover_sound') !== 'off';
     } catch (_) {}
 
     function saveSession() {
@@ -71,6 +78,87 @@
       el.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full text-white text-sm font-medium shadow-lg ${isInfo ? 'bg-teal-600' : 'bg-rose-600'}`;
       clearTimeout(showToast._t);
       showToast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+    }
+
+    function warnSoundLocked() {
+      if (state.audioUnlockWarned) return;
+      state.audioUnlockWarned = true;
+      showToast('当前浏览器未解锁声音，游戏仍可进行', true);
+    }
+
+    // Mobile browsers only allow AudioContext after a user gesture (create/join click).
+    function unlockAudio() {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return warnSoundLocked();
+      try {
+        if (!state.audioCtx) state.audioCtx = new Ctx();
+        if (state.audioCtx.state === 'running') return;
+        Promise.resolve(state.audioCtx.resume()).catch(warnSoundLocked);
+      } catch (_) {
+        warnSoundLocked();
+      }
+    }
+
+    // Short locally synthesised beeps; no audio files, CDN or tracking.
+    function playCueTone(key) {
+      if (!state.soundEnabled || !key || !state.audioCtx || state.audioCtx.state !== 'running') return;
+      try {
+        const ctx = state.audioCtx;
+        const now = ctx.currentTime;
+        const isTurn = key.indexOf('turn:') === 0;
+        const freq = isTurn ? 880 : (key.indexOf('vote:') === 0 ? 660 : 520);
+        const offsets = isTurn ? [0, 0.15] : [0];
+        offsets.forEach(offset => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + offset);
+          gain.gain.setValueAtTime(0.0001, now + offset);
+          gain.gain.exponentialRampToValueAtTime(0.09, now + offset + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + offset + 0.12);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now + offset);
+          osc.stop(now + offset + 0.14);
+        });
+      } catch (_) {}
+    }
+
+    function applySnapshotCue(snapshot) {
+      const key = UndercoverShared.cueKey(snapshot, state.playerId);
+      const next = UndercoverShared.nextCueState(state.audioCueState, key, !state.soundEnabled);
+      state.audioCueState = next;
+      if (next.play) playCueTone(key);
+    }
+
+    function readNickname() {
+      const el = document.getElementById('inp-nick');
+      const check = UndercoverShared.validateNickname(el ? el.value : state.nickname);
+      if (!check.ok) {
+        showToast(check.error);
+        return null;
+      }
+      state.nickname = check.value;
+      return check.value;
+    }
+
+    function bindSoundButton() {
+      const btn = document.getElementById('btn-sound');
+      if (!btn) return;
+      btn.addEventListener('click', () => {
+        state.soundEnabled = !state.soundEnabled;
+        try {
+          localStorage.setItem('undercover_sound', state.soundEnabled ? 'on' : 'off');
+        } catch (_) {}
+        // Adopt the current cue as already seen so unmuting never replays old state.
+        state.audioCueState = UndercoverShared.nextCueState(
+          state.audioCueState,
+          UndercoverShared.cueKey(state.snapshot, state.playerId),
+          true
+        );
+        if (state.soundEnabled) unlockAudio();
+        render();
+      });
     }
 
     function connectWs() {
@@ -108,6 +196,7 @@
         } else if (msg.type === 'room:snapshot') {
           state.snapshot = msg.data;
           state.clockOffset = (msg.data.serverNow || Date.now()) - Date.now();
+          applySnapshotCue(msg.data);
           render();
         }
       };
@@ -161,7 +250,9 @@
             <div>
               <label class="block text-xs text-slate-400 mb-1.5">你的昵称</label>
               <input id="inp-nick" type="text" maxlength="12" value="${state.nickname}" placeholder="输入昵称（如：老王）" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:outline-none focus:border-teal-400" />
+              <p class="text-[11px] text-slate-500 mt-1.5">须自定义 1–12 字昵称，不能用「N号玩家」等默认名</p>
             </div>
+            <button id="btn-sound" class="w-full py-2 rounded-xl bg-slate-900 border border-slate-600 text-xs text-slate-300">${state.soundEnabled ? '🔊 音效开启（点击静音）' : '🔇 音效已关闭（点击开启）'}</button>
             <button id="btn-create" class="w-full py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm transition">创建新房间</button>
             <div class="flex items-center gap-2 pt-2 border-t border-slate-700/80">
               <input id="inp-code" type="text" maxlength="6" value="${state.joinCodeInput}" placeholder="输入 4 位房间号" class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm font-mono tracking-widest focus:outline-none focus:border-teal-400" />
@@ -263,7 +354,10 @@
             <span class="px-2 py-0.5 rounded-md bg-teal-500/20 text-teal-300 text-xs font-semibold">${phaseLabel}</span>
             <span class="text-xs text-slate-400 font-mono">#${s.roomCode}</span>
           </div>
-          <span id="timer-badge" class="text-sm font-mono font-bold text-amber-400">${remain !== null ? remain + 's' : ''}</span>
+          <div class="flex items-center gap-2">
+            <button id="btn-sound" class="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[11px] text-slate-300">${state.soundEnabled ? '🔊' : '🔇'}</button>
+            <span id="timer-badge" class="text-sm font-mono font-bold text-amber-400">${remain !== null ? remain + 's' : ''}</span>
+          </div>
         </div>
 
         <!-- My Secret Word Card -->
@@ -366,6 +460,7 @@
               <button id="btn-ghost-send" class="px-4 py-2.5 rounded-xl bg-indigo-500 text-white text-sm font-semibold">发送</button>
             </div>
           ` : isMyTurn ? `
+            <div id="turn-cue" class="mb-2 py-2 rounded-xl bg-amber-500/15 border border-amber-400/60 text-center text-sm font-bold text-amber-200 animate-pulse">🔔 轮到你了！请用一句话描述（禁提原词）</div>
             <div class="flex gap-2">
               <button id="btn-voice-v2" title="V2 预留按住说话语音条" class="px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs shrink-0">语音(V2)</button>
               <input id="inp-speech" type="text" maxlength="80" placeholder="轮到你了！用一句话描述（禁提原词）" class="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 border border-teal-500 text-sm text-white focus:outline-none" />
@@ -391,12 +486,19 @@
         const codeEl = document.getElementById('inp-code');
         nickEl.addEventListener('input', e => { state.nickname = e.target.value; });
         codeEl.addEventListener('input', e => { state.joinCodeInput = e.target.value; });
+        bindSoundButton();
         document.getElementById('btn-create').addEventListener('click', () => {
-          send({ type: 'room:create', nickname: state.nickname, avatar: state.selectedAvatar });
+          unlockAudio();
+          const nickname = readNickname();
+          if (!nickname) return;
+          send({ type: 'room:create', nickname, avatar: state.selectedAvatar });
         });
         document.getElementById('btn-join').addEventListener('click', () => {
+          unlockAudio();
           if (!state.joinCodeInput.trim()) return showToast('请输入房间号');
-          send({ type: 'room:join', roomCode: state.joinCodeInput.trim(), nickname: state.nickname, avatar: state.selectedAvatar });
+          const nickname = readNickname();
+          if (!nickname) return;
+          send({ type: 'room:join', roomCode: state.joinCodeInput.trim(), nickname, avatar: state.selectedAvatar });
         });
         return;
       }
@@ -429,6 +531,7 @@
         if (readyBtn) readyBtn.addEventListener('click', () => send({ type: 'player:ready' }));
       } else {
         app.innerHTML = renderGame(s);
+        bindSoundButton();
         document.getElementById('btn-toggle-word').addEventListener('click', () => { state.wordHidden = !state.wordHidden; render(); });
         app.querySelectorAll('[data-vote]').forEach(b => {
           b.addEventListener('click', () => send({ type: 'vote:cast', targetPlayerId: b.dataset.vote }));
