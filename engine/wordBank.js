@@ -1,118 +1,96 @@
-// Curated 100 Chinese word pairs for 3-10 player "Who is the Undercover" (谁是卧底)
-// Each pair shares 60%-70% conceptual overlap with 1-2 clear distinguishing traits.
+// External word bank: load the curated Chinese word pairs from data/words.json at startup.
+// WORD_BANK_PATH overrides the default file; relative paths resolve against process.cwd().
+// Invalid data aborts startup — never fall back to an empty or partial bank.
 
-const WORD_BANK = [
-  // 日常美食 (25)
-  { id: 'food_01', a: '牛奶', b: '豆浆', category: '日常美食', difficulty: 1 },
-  { id: 'food_02', a: '包子', b: '饺子', category: '日常美食', difficulty: 1 },
-  { id: 'food_03', a: '可乐', b: '雪碧', category: '日常美食', difficulty: 1 },
-  { id: 'food_04', a: '火锅', b: '麻辣烫', category: '日常美食', difficulty: 1 },
-  { id: 'food_05', a: '汉堡', b: '肉夹馍', category: '日常美食', difficulty: 1 },
-  { id: 'food_06', a: '薯条', b: '薯片', category: '日常美食', difficulty: 1 },
-  { id: 'food_07', a: '咖啡', b: '奶茶', category: '日常美食', difficulty: 1 },
-  { id: 'food_08', a: '西瓜', b: '哈密瓜', category: '日常美食', difficulty: 1 },
-  { id: 'food_09', a: '酸奶', b: '布丁', category: '日常美食', difficulty: 2 },
-  { id: 'food_10', a: '烧烤', b: '铁板烧', category: '日常美食', difficulty: 2 },
-  { id: 'food_11', a: '寿司', b: '饭团', category: '日常美食', difficulty: 2 },
-  { id: 'food_12', a: '拉面', b: '米线', category: '日常美食', difficulty: 1 },
-  { id: 'food_13', a: '油条', b: '麻花', category: '日常美食', difficulty: 2 },
-  { id: 'food_14', a: '草莓', b: '车厘子', category: '日常美食', difficulty: 1 },
-  { id: 'food_15', a: '冰淇淋', b: '刨冰', category: '日常美食', difficulty: 2 },
-  { id: 'food_16', a: '披萨', b: '葱油饼', category: '日常美食', difficulty: 2 },
-  { id: 'food_17', a: '柠檬', b: '橘子', category: '日常美食', difficulty: 1 },
-  { id: 'food_18', a: '红茶', b: '绿茶', category: '日常美食', difficulty: 2 },
-  { id: 'food_19', a: '粽子', b: '汤圆', category: '日常美食', difficulty: 1 },
-  { id: 'food_20', a: '巧克力', b: '太妃糖', category: '日常美食', difficulty: 2 },
-  { id: 'food_21', a: '煎蛋', b: '水煮蛋', category: '日常美食', difficulty: 1 },
-  { id: 'food_22', a: '啤酒', b: '香槟', category: '日常美食', difficulty: 2 },
-  { id: 'food_23', a: '烤鸭', b: '白切鸡', category: '日常美食', difficulty: 2 },
-  { id: 'food_24', a: '螺蛳粉', b: '酸辣粉', category: '日常美食', difficulty: 1 },
-  { id: 'food_25', a: '提拉米苏', b: '芝士蛋糕', category: '日常美食', difficulty: 3 },
+const fs = require('fs');
+const path = require('path');
 
-  // 生活物品 (25)
-  { id: 'life_01', a: '空调', b: '电风扇', category: '生活物品', difficulty: 1 },
-  { id: 'life_02', a: '牙刷', b: '牙膏', category: '生活物品', difficulty: 1 },
-  { id: 'life_03', a: '雨伞', b: '雨衣', category: '生活物品', difficulty: 1 },
-  { id: 'life_04', a: '眼镜', b: '墨镜', category: '生活物品', difficulty: 1 },
-  { id: 'life_05', a: '电梯', b: '扶梯', category: '生活物品', difficulty: 1 },
-  { id: 'life_06', a: '枕头', b: '抱枕', category: '生活物品', difficulty: 2 },
-  { id: 'life_07', a: '口红', b: '唇膏', category: '生活物品', difficulty: 2 },
-  { id: 'life_08', a: '洗发水', b: '沐浴露', category: '生活物品', difficulty: 1 },
-  { id: 'life_09', a: '自行车', b: '电动车', category: '生活物品', difficulty: 1 },
-  { id: 'life_10', a: '耳机', b: '音箱', category: '生活物品', difficulty: 1 },
-  { id: 'life_11', a: '微波炉', b: '烤箱', category: '生活物品', difficulty: 2 },
-  { id: 'life_12', a: '纸巾', b: '湿巾', category: '生活物品', difficulty: 1 },
-  { id: 'life_13', a: '手表', b: '手环', category: '生活物品', difficulty: 2 },
-  { id: 'life_14', a: '双肩包', b: '行李箱', category: '生活物品', difficulty: 1 },
-  { id: 'life_15', a: '剪刀', b: '美工刀', category: '生活物品', difficulty: 2 },
-  { id: 'life_16', a: '沙发', b: '懒人椅', category: '生活物品', difficulty: 2 },
-  { id: 'life_17', a: '保温杯', b: '马克杯', category: '生活物品', difficulty: 1 },
-  { id: 'life_18', a: '口罩', b: '眼罩', category: '生活物品', difficulty: 1 },
-  { id: 'life_19', a: '充电宝', b: '充电器', category: '生活物品', difficulty: 1 },
-  { id: 'life_20', a: '扫地机器人', b: '吸尘器', category: '生活物品', difficulty: 2 },
-  { id: 'life_21', a: '毛衣', b: '卫衣', category: '生活物品', difficulty: 1 },
-  { id: 'life_22', a: '拖鞋', b: '凉鞋', category: '生活物品', difficulty: 1 },
-  { id: 'life_23', a: '钢笔', b: '中性笔', category: '生活物品', difficulty: 2 },
-  { id: 'life_24', a: '台灯', b: '手电筒', category: '生活物品', difficulty: 1 },
-  { id: 'life_25', a: '护照', b: '身份证', category: '生活物品', difficulty: 2 },
+const DEFAULT_WORD_BANK_PATH = path.join(__dirname, '..', 'data', 'words.json');
 
-  // 影视动漫 (25)
-  { id: 'ent_01', a: '蜘蛛侠', b: '蝙蝠侠', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_02', a: '孙悟空', b: '哪吒', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_03', a: '柯南', b: '福尔摩斯', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_04', a: '哆啦A梦', b: '皮卡丘', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_05', a: '哈利波特', b: '指环王', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_06', a: '甄嬛传', b: '延禧攻略', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_07', a: '海贼王', b: '火影忍者', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_08', a: '钢铁侠', b: '美国队长', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_09', a: '奥特曼', b: '变形金刚', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_10', a: '喜羊羊', b: '熊大', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_11', a: '泰坦尼克号', b: '阿凡达', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_12', a: '流浪地球', b: '星际穿越', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_13', a: '周杰伦', b: '林俊杰', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_14', a: '相声', b: '脱口秀', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_15', a: '电影院', b: '剧场', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_16', a: '蜡笔小新', b: '樱桃小丸子', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_17', a: '猫和老鼠', b: '海绵宝宝', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_18', a: '三国演义', b: '水浒传', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_19', a: '王者荣耀', b: '英雄联盟', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_20', a: '狼人杀', b: '剧本杀', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_21', a: '演唱会', b: '音乐节', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_22', a: '动漫', b: '漫画', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_23', a: '密室逃脱', b: '鬼屋', category: '影视动漫', difficulty: 2 },
-  { id: 'ent_24', a: 'KTV', b: '酒吧', category: '影视动漫', difficulty: 1 },
-  { id: 'ent_25', a: '迪士尼', b: '环球影城', category: '影视动漫', difficulty: 1 },
-
-  // 职场休闲 (25)
-  { id: 'work_01', a: '微信', b: 'QQ', category: '职场休闲', difficulty: 1 },
-  { id: 'work_02', a: '加班', b: '出差', category: '职场休闲', difficulty: 1 },
-  { id: 'work_03', a: 'PPT', b: 'Excel', category: '职场休闲', difficulty: 1 },
-  { id: 'work_04', a: '年终奖', b: '绩效奖', category: '职场休闲', difficulty: 2 },
-  { id: 'work_05', a: '团建', b: '聚餐', category: '职场休闲', difficulty: 1 },
-  { id: 'work_06', a: '实习生', b: '应届生', category: '职场休闲', difficulty: 2 },
-  { id: 'work_07', a: '露营', b: '野餐', category: '职场休闲', difficulty: 1 },
-  { id: 'work_08', a: '健身房', b: '瑜伽馆', category: '职场休闲', difficulty: 1 },
-  { id: 'work_09', a: '高铁', b: '飞机', category: '职场休闲', difficulty: 1 },
-  { id: 'work_10', a: '民宿', b: '酒店', category: '职场休闲', difficulty: 1 },
-  { id: 'work_11', a: '网购', b: '代购', category: '职场休闲', difficulty: 2 },
-  { id: 'work_12', a: '外卖', b: '堂食', category: '职场休闲', difficulty: 1 },
-  { id: 'work_13', a: '地铁', b: '公交车', category: '职场休闲', difficulty: 1 },
-  { id: 'work_14', a: '图书馆', b: '书店', category: '职场休闲', difficulty: 1 },
-  { id: 'work_15', a: '游泳', b: '潜水', category: '职场休闲', difficulty: 2 },
-  { id: 'work_16', a: '滑雪', b: '滑冰', category: '职场休闲', difficulty: 2 },
-  { id: 'work_17', a: '朋友圈', b: '微博', category: '职场休闲', difficulty: 1 },
-  { id: 'work_18', a: '直播', b: '短视频', category: '职场休闲', difficulty: 1 },
-  { id: 'work_19', a: '简历', b: '作品集', category: '职场休闲', difficulty: 2 },
-  { id: 'work_20', a: '远程办公', b: '自由职业', category: '职场休闲', difficulty: 3 },
-  { id: 'work_21', a: '相亲', b: '约会', category: '职场休闲', difficulty: 1 },
-  { id: 'work_22', a: '房东', b: '中介', category: '职场休闲', difficulty: 2 },
-  { id: 'work_23', a: '双十一', b: '618', category: '职场休闲', difficulty: 2 },
-  { id: 'work_24', a: '打卡', b: '请假', category: '职场休闲', difficulty: 1 },
-  { id: 'work_25', a: '咖啡厅', b: '茶馆', category: '职场休闲', difficulty: 1 }
-];
-
-const CATEGORIES = ['全部', '日常美食', '生活物品', '影视动漫', '职场休闲'];
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { WORD_BANK, CATEGORIES };
+function resolveWordBankPath() {
+  const configured = process.env.WORD_BANK_PATH;
+  if (!configured) return DEFAULT_WORD_BANK_PATH;
+  return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
 }
+
+function requireNonEmptyString(value, field, context) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`词库校验失败：${context} 的 ${field} 必须是非空字符串`);
+  }
+  return value.trim();
+}
+
+function loadWordBank(filePath) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    throw new Error(`词库加载失败：无法读取文件 ${filePath}（${err.message}）`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`词库校验失败：${filePath} 不是合法 JSON（${err.message}）`);
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Array.isArray(data.pairs)) {
+    throw new Error(`词库校验失败：${filePath} 缺少 pairs 数组`);
+  }
+  if (data.pairs.length === 0) {
+    throw new Error(`词库校验失败：${filePath} 的 pairs 数组不能为空`);
+  }
+  if (!Array.isArray(data.categories) || data.categories.length === 0) {
+    throw new Error(`词库校验失败：${filePath} 缺少 categories 数组`);
+  }
+  data.categories.forEach((category, index) => {
+    requireNonEmptyString(category, `categories[${index}]`, filePath);
+  });
+  if (data.categories[0] !== '全部') {
+    throw new Error(`词库校验失败：${filePath} 的 categories 必须以「全部」开头`);
+  }
+
+  const categories = new Set(data.categories);
+  if (categories.size !== data.categories.length) {
+    throw new Error(`词库校验失败：${filePath} 的 categories 存在重复项`);
+  }
+
+  const ids = new Set();
+  const pairKeys = new Map();
+  data.pairs.forEach((pair, index) => {
+    const context = `pairs[${index}]`;
+    if (!pair || typeof pair !== 'object' || Array.isArray(pair)) {
+      throw new Error(`词库校验失败：${context} 必须是对象`);
+    }
+
+    const id = requireNonEmptyString(pair.id, 'id', context);
+    if (ids.has(id)) {
+      throw new Error(`词库校验失败：重复的 id「${id}」（${context}）`);
+    }
+    ids.add(id);
+
+    const a = requireNonEmptyString(pair.a, 'a', context);
+    const b = requireNonEmptyString(pair.b, 'b', context);
+    if (a.toLowerCase() === b.toLowerCase()) {
+      throw new Error(`词库校验失败：${context} 的 a/b 不能相同（「${a}」）`);
+    }
+
+    const category = requireNonEmptyString(pair.category, 'category', context);
+    if (category === '全部' || !categories.has(category)) {
+      throw new Error(`词库校验失败：${context} 的 category「${category}」不是有效分类`);
+    }
+
+    const pairKey = JSON.stringify([a.toLowerCase(), b.toLowerCase()].sort());
+    if (pairKeys.has(pairKey)) {
+      throw new Error(`词库校验失败：词对重复（${pairKeys.get(pairKey)} 与 ${id}）`);
+    }
+    pairKeys.set(pairKey, id);
+  });
+
+  return { WORD_BANK: data.pairs, CATEGORIES: data.categories };
+}
+
+const { WORD_BANK, CATEGORIES } = loadWordBank(resolveWordBankPath());
+
+module.exports = { WORD_BANK, CATEGORIES };

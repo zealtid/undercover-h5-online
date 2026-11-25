@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { UndercoverRoom } = require('./engine/fsm');
 const { CATEGORIES } = require('./engine/wordBank');
 
+const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 200;
 const MAX_MSG_BYTES = Number(process.env.MAX_MSG_BYTES) || 8 * 1024;
@@ -442,8 +443,8 @@ setInterval(() => {
 }, 60 * 1000);
 
 if (require.main === module) {
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Undercover H5 Online Server running at http://0.0.0.0:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`Undercover H5 Online Server running at http://${HOST}:${PORT} (HOST=${HOST}, PORT=${PORT})`);
     console.log(`Limits: maxRooms=${MAX_ROOMS}, msgBytes=${MAX_MSG_BYTES}, create/min=${RATE_CREATE_PER_MIN}`);
   });
 }
