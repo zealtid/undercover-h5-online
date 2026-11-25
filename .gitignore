@@ -9,4 +9,4 @@ node_modules/
 .vscode/
 *.swp
 .cursor/
-data/
+data/word-feedback.jsonl

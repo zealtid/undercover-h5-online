@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { UndercoverRoom } = require('./engine/fsm');
 const { CATEGORIES } = require('./engine/wordBank');
 
+const HOST = process.env.HOST || '127.0.0.1';
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_ROOMS = Number(process.env.MAX_ROOMS) || 200;
 const MAX_MSG_BYTES = Number(process.env.MAX_MSG_BYTES) || 8 * 1024;
@@ -357,6 +358,7 @@ function parseWsFrames(socket, meta) {
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const INDEX_HTML = path.join(PUBLIC_DIR, 'index.html');
+const SHARED_JS = path.join(PUBLIC_DIR, 'shared.js');
 
 const server = http.createServer((req, res) => {
   const url = (req.url || '/').split('?')[0];
@@ -373,6 +375,23 @@ const server = http.createServer((req, res) => {
       maxRooms: MAX_ROOMS,
       uptime: Math.floor(process.uptime())
     }));
+  }
+
+  // Shared client helpers (same module the backend requires); no directory listing.
+  if (url === '/shared.js') {
+    fs.readFile(SHARED_JS, 'utf8', (err, js) => {
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end('Failed to load shared helpers');
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'X-Content-Type-Options': 'nosniff'
+      });
+      res.end(js);
+    });
+    return;
   }
 
   // Only serve the single H5 page (no directory listing)
@@ -469,8 +488,8 @@ setInterval(() => {
 }, 60 * 1000);
 
 if (require.main === module) {
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Undercover H5 Online Server running at http://0.0.0.0:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`Undercover H5 Online Server running at http://${HOST}:${PORT} (HOST=${HOST}, PORT=${PORT})`);
     console.log(`Limits: maxRooms=${MAX_ROOMS}, msgBytes=${MAX_MSG_BYTES}, create/min=${RATE_CREATE_PER_MIN}`);
   });
 }

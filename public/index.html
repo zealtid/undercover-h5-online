@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>谁是卧底 · 多端联机 H5</title>
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="/shared.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif; }
     .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 12px); }
@@ -33,7 +34,7 @@
       roomCode: '',
       playerId: '',
       reconnectToken: '',
-      categories: ['全部','日常美食','生活物品','影视动漫','职场休闲'],
+      categories: ['全部','日常美食','生活物品','影视动漫','职场休闲','上班生活','网络生活','旅行出行'],
       snapshot: null,
       wordHidden: false,
       clockOffset: 0,
@@ -51,16 +52,26 @@
       speechCount: 0
     };
 
+    function acceptNickname(raw) {
+      if (!window.UndercoverShared) {
+        const name = String(raw || '').trim();
+        return name ? { ok: true, value: name.slice(0, 12) } : { ok: false, error: '请输入自定义昵称' };
+      }
+      return UndercoverShared.validateNickname(raw);
+    }
+
     try {
       const saved = JSON.parse(localStorage.getItem('undercover_session') || 'null');
       if (saved) {
         state.roomCode = saved.roomCode || '';
         state.reconnectToken = saved.reconnectToken || '';
-        state.nickname = saved.nickname || '';
+        const savedNick = acceptNickname(saved.nickname);
+        state.nickname = savedNick.ok ? savedNick.value : '';
       }
       const prefs = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
       if (prefs) {
-        if (prefs.nickname) state.nickname = prefs.nickname;
+        const prefNick = acceptNickname(prefs.nickname);
+        if (prefNick.ok) state.nickname = prefNick.value;
         if (prefs.avatar && AVATARS.includes(prefs.avatar)) {
           state.selectedAvatar = prefs.avatar;
           state.avatarChosen = true;
@@ -226,14 +237,17 @@
     const sfx = AudioFX;
 
     function ensureProfileReady() {
-      const nick = (state.nickname || '').trim();
-      const needNick = !nick || nick.length < 2;
+      const nickCheck = acceptNickname(state.nickname);
+      const needNick = !nickCheck.ok;
       const needAvatar = !state.avatarChosen;
-      if (!needNick && !needAvatar) return true;
+      if (!needNick && !needAvatar) {
+        state.nickname = nickCheck.value;
+        return true;
+      }
       state.highlightProfile = true;
       render();
-      if (needNick && needAvatar) showToast('请先填写昵称，并点选一个头像');
-      else if (needNick) showToast('请先设置昵称（至少 2 个字）');
+      if (needNick && needAvatar) showToast(nickCheck.error || '请先填写昵称，并点选一个头像');
+      else if (needNick) showToast(nickCheck.error || '请先设置自定义昵称');
       else showToast('请先点选一个头像，方便好友认出你');
       const nickEl = document.getElementById('inp-nick');
       if (nickEl && needNick) setTimeout(() => nickEl.focus(), 50);
@@ -411,7 +425,7 @@
     }, 500);
 
     function renderHome() {
-      const nickNeed = state.highlightProfile && (!(state.nickname || '').trim() || (state.nickname || '').trim().length < 2);
+      const nickNeed = state.highlightProfile && !acceptNickname(state.nickname).ok;
       const avatarNeed = state.highlightProfile && !state.avatarChosen;
       return `
         <div class="px-4 pt-4 flex items-center justify-between">
@@ -435,6 +449,7 @@
             <div>
               <label class="block text-xs mb-1 ${nickNeed ? 'text-teal-300 font-semibold' : 'text-slate-500'}">昵称${nickNeed ? ' · 必填' : ''}</label>
               <input id="inp-nick" type="text" maxlength="12" value="${state.nickname.replace(/"/g, '&quot;')}" placeholder="输入昵称（如：老王）" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border text-white text-sm focus:outline-none focus:border-teal-400 ${nickNeed ? 'border-teal-400 need-attention' : 'border-slate-700'}" />
+              <p class="text-[11px] text-slate-500 mt-1.5">须自定义 1–12 字，不能用「N号玩家」等默认名</p>
             </div>
           </div>
 
@@ -698,7 +713,7 @@
         const codeEl = document.getElementById('inp-code');
         nickEl.addEventListener('input', e => {
           state.nickname = e.target.value;
-          if ((state.nickname || '').trim().length >= 2) state.highlightProfile = false;
+          if (acceptNickname(state.nickname).ok) state.highlightProfile = false;
           savePrefs();
         });
         codeEl.addEventListener('input', e => {

@@ -4,6 +4,7 @@
 
 const crypto = require('crypto');
 const { WORD_BANK } = require('./wordBank');
+const { validateNickname } = require('./nickname');
 
 const PHASES = {
   LOBBY: 'LOBBY',
@@ -167,8 +168,9 @@ class UndercoverRoom {
       if (existing) {
         existing.online = true;
         existing.disconnectedAt = null;
-        if (nickname && this.phase === PHASES.LOBBY) {
-          existing.nickname = nickname.trim().slice(0, 12) || existing.nickname;
+        const nameCheck = validateNickname(nickname);
+        if (nameCheck.ok && this.phase === PHASES.LOBBY) {
+          existing.nickname = nameCheck.value;
         }
         this.emitUpdate();
         return { ok: true, player: existing, reconnected: true };
@@ -187,11 +189,14 @@ class UndercoverRoom {
     let seat = 1;
     while (usedSeats.has(seat)) seat++;
 
-    const cleanName = (nickname || '').trim().slice(0, 12) || `${seat}号玩家`;
+    const nameCheck = validateNickname(nickname);
+    if (!nameCheck.ok) {
+      return { ok: false, error: nameCheck.error };
+    }
     const player = {
       id: generateId('pl'),
       seat,
-      nickname: cleanName,
+      nickname: nameCheck.value,
       avatar,
       token: generateId('tk'),
       online: true,
