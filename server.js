@@ -209,6 +209,7 @@ function handleMessage(socket, rawText) {
       roomCode: room.roomCode,
       playerId: res.player.id,
       reconnectToken: res.player.token,
+      memberType: res.memberType || 'player',
       categories: CATEGORIES
     });
     broadcastRoom(room);
@@ -238,6 +239,7 @@ function handleMessage(socket, rawText) {
       playerId: res.player.id,
       reconnectToken: res.player.token,
       reconnected: res.reconnected,
+      memberType: res.memberType || 'player',
       categories: CATEGORIES
     });
     broadcastRoom(room);
@@ -285,6 +287,12 @@ function handleMessage(socket, rawText) {
       break;
     case 'game:reset':
       res = room.resetToLobby(meta.playerId);
+      break;
+    case 'room:switch_seat':
+      res = room.switchSeat(meta.playerId, msg.targetRole);
+      break;
+    case 'spectator:queue_next':
+      res = room.toggleQueueNext(meta.playerId, msg.wantToPlay === true);
       break;
     case 'word:feedback': {
       res = room.submitWordFeedback(meta.playerId, msg.rating);
@@ -539,14 +547,17 @@ server.on('upgrade', (req, socket) => {
   socket.on('error', cleanup);
 });
 
-// GC: zombie rooms + lobby offline prune + rate bucket sweep
+// GC: zombie rooms + lobby offline prune + spectator offline prune + rate bucket sweep
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms.entries()) {
     if (room.phase === 'LOBBY') {
       room.pruneOfflineLobbyPlayers(90 * 1000);
     }
-    const onlineCount = room.players.filter(p => p.online).length;
+    room.pruneOfflineSpectators(60 * 1000);
+    const onlineCount = typeof room.onlineMemberCount === 'function'
+      ? room.onlineMemberCount()
+      : room.players.filter(p => p.online).length;
     if ((onlineCount === 0 && now - room.lastActiveAt > 3 * 60 * 1000) ||
         now - room.lastActiveAt > 30 * 60 * 1000) {
       room.clearTimer();

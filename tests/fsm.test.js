@@ -423,7 +423,148 @@ function runTests() {
   assert.strictEqual(roomBugC.ghostBets[bugCOut.id].score, 10);
   roomBugC.clearTimer();
 
-  console.log('ALL FSM TESTS PASSED (3p, 6p, taboo, projection, PK, reconnect, abstain-PK, voice-ban, kick, 4p-continue, word-fb, M1-M4, bugfixes)');
+  // ---------- External spectator gallery ----------
+  // 1) Mid-game join lands in spectators
+  const roomSp1 = new UndercoverRoom('SP01');
+  for (let i = 1; i <= 3; i++) roomSp1.addPlayer({ nickname: `SP1P${i}` });
+  roomSp1.players.slice(1).forEach(p => roomSp1.toggleReady(p.id));
+  assert.strictEqual(roomSp1.startGame(roomSp1.hostId).ok, true);
+  assert.strictEqual(roomSp1.phase, PHASES.SPEAKING);
+  const midJoin = roomSp1.addPlayer({ nickname: '迟到的凯' });
+  assert.strictEqual(midJoin.ok, true);
+  assert.strictEqual(midJoin.memberType, 'spectator');
+  assert.strictEqual(roomSp1.players.length, 3);
+  assert.strictEqual(roomSp1.spectators.length, 1);
+  assert.strictEqual(roomSp1.spectators[0].nickname, '迟到的凯');
+  roomSp1.clearTimer();
+
+  // 2) Full 10 overflow + switchSeat
+  const roomSp2 = new UndercoverRoom('SP02');
+  const sp2Players = [];
+  for (let i = 1; i <= 10; i++) sp2Players.push(roomSp2.addPlayer({ nickname: `满员${i}` }).player);
+  assert.strictEqual(roomSp2.players.length, 10);
+  const overflow = roomSp2.addPlayer({ nickname: '第11人' });
+  assert.strictEqual(overflow.ok, true);
+  assert.strictEqual(overflow.memberType, 'spectator');
+  assert.strictEqual(roomSp2.spectators.length, 1);
+  // Free a seat then spectator seats up
+  roomSp2.removePlayer(sp2Players[9].id);
+  assert.strictEqual(roomSp2.players.length, 9);
+  const seatUp = roomSp2.switchSeat(overflow.player.id, 'player');
+  assert.strictEqual(seatUp.ok, true);
+  assert.strictEqual(seatUp.memberType, 'player');
+  assert.strictEqual(roomSp2.players.length, 10);
+  assert.strictEqual(roomSp2.spectators.length, 0);
+
+  // 3) Reasoning view anti-leak
+  const roomSp3 = new UndercoverRoom('SP03');
+  for (let i = 1; i <= 3; i++) roomSp3.addPlayer({ nickname: `SP3P${i}` });
+  roomSp3.players.slice(1).forEach(p => roomSp3.toggleReady(p.id));
+  assert.strictEqual(roomSp3.startGame(roomSp3.hostId).ok, true);
+  const sp3 = roomSp3.addPlayer({ nickname: '推理观众' }).player;
+  assert.strictEqual(roomSp3.config.spectatorGodView, false);
+  const reasonSnap = roomSp3.getPlayerSnapshot(sp3.id);
+  assert.strictEqual(reasonSnap.viewerType, 'EXTERNAL_SPECTATOR');
+  assert.strictEqual(reasonSnap.wordReveal, null);
+  assert.strictEqual(reasonSnap.myWord, null);
+  assert.strictEqual(reasonSnap.ghostMessages.length, 0);
+  reasonSnap.players.forEach(p => assert.strictEqual(p.role, null));
+  roomSp3.clearTimer();
+
+  // 4) God view secrets + action blocked
+  const roomSp4 = new UndercoverRoom('SP04');
+  for (let i = 1; i <= 3; i++) roomSp4.addPlayer({ nickname: `SP4P${i}` });
+  roomSp4.updateConfig(roomSp4.hostId, { spectatorGodView: true });
+  roomSp4.players.slice(1).forEach(p => roomSp4.toggleReady(p.id));
+  assert.strictEqual(roomSp4.startGame(roomSp4.hostId).ok, true);
+  const sp4 = roomSp4.addPlayer({ nickname: '上帝观众' }).player;
+  const godSnap = roomSp4.getPlayerSnapshot(sp4.id);
+  assert.strictEqual(godSnap.viewerType, 'EXTERNAL_SPECTATOR');
+  assert.ok(godSnap.wordReveal);
+  assert.ok(godSnap.wordReveal.civilianWord);
+  assert.ok(godSnap.players.every(p => p.role != null));
+  assert.strictEqual(roomSp4.submitSpeech(sp4.id, { content: '我不能发言' }).ok, false);
+  assert.strictEqual(roomSp4.submitSpeech(sp4.id, { content: '我不能发言' }).error, '观战模式不可参与当前操作');
+  // Force voting then try cast
+  while (roomSp4.phase === PHASES.SPEAKING || roomSp4.phase === PHASES.TIE_PK) {
+    roomSp4.submitSpeech(roomSp4.currentSpeakerId, { content: `sp4-${roomSp4.turnIndex}` });
+  }
+  assert.strictEqual(roomSp4.phase, PHASES.VOTING);
+  assert.strictEqual(roomSp4.castVote(sp4.id, roomSp4.players[0].id).ok, false);
+  assert.strictEqual(roomSp4.castVote(sp4.id, roomSp4.players[0].id).error, '观战模式不可参与当前操作');
+  roomSp4.clearTimer();
+
+  // 5) Host switches to spectator → host transferred + sanitizeConfig
+  const roomSp5 = new UndercoverRoom('SP05');
+  const h5 = roomSp5.addPlayer({ nickname: '原房主' }).player;
+  const p5b = roomSp5.addPlayer({ nickname: '接班人' }).player;
+  roomSp5.addPlayer({ nickname: '第三人' });
+  roomSp5.updateConfig(h5.id, { spyCount: 2 }); // will clamp once below 6 after host leaves seats
+  // Need 6 for spyCount 2 first
+  for (let i = 4; i <= 6; i++) roomSp5.addPlayer({ nickname: `补位${i}` });
+  roomSp5.updateConfig(h5.id, { spyCount: 2 });
+  assert.strictEqual(roomSp5.config.spyCount, 2);
+  // Drop to 5 players by moving host + removing one more after switch... first switch host
+  assert.strictEqual(roomSp5.switchSeat(h5.id, 'spectator').ok, true);
+  assert.notStrictEqual(roomSp5.hostId, h5.id);
+  assert.ok(roomSp5.players.find(p => p.id === roomSp5.hostId));
+  assert.ok(roomSp5.spectators.find(s => s.id === h5.id));
+  // Remove players until < 6 so sanitize clamps spyCount
+  while (roomSp5.players.length > 5) {
+    const victim = roomSp5.players.find(p => p.id !== roomSp5.hostId);
+    roomSp5.removePlayer(victim.id);
+  }
+  assert.ok(roomSp5.players.length <= 5);
+  assert.strictEqual(roomSp5.config.spyCount, 1);
+
+  // 6) Queue next + auto promote on resetToLobby
+  const roomSp6 = new UndercoverRoom('SP06');
+  for (let i = 1; i <= 3; i++) roomSp6.addPlayer({ nickname: `SP6P${i}` });
+  roomSp6.players.slice(1).forEach(p => roomSp6.toggleReady(p.id));
+  assert.strictEqual(roomSp6.startGame(roomSp6.hostId).ok, true);
+  // Fill to 10 players mid-game isn't needed — add 9 spectators with wantToPlay after finishing
+  // Simpler: finish quickly then queue in lobby... Plan says resetToLobby after queue during game.
+  const earlySp = [];
+  for (let i = 1; i <= 2; i++) {
+    const r = roomSp6.addPlayer({ nickname: `排队${i}` });
+    assert.strictEqual(r.memberType, 'spectator');
+    earlySp.push(r.player);
+  }
+  // Ensure joinedAt order: first earlier
+  roomSp6.spectators[0].joinedAt = 1000;
+  roomSp6.spectators[1].joinedAt = 2000;
+  assert.strictEqual(roomSp6.toggleQueueNext(earlySp[0].id, true).ok, true);
+  assert.strictEqual(roomSp6.toggleQueueNext(earlySp[1].id, true).ok, true);
+  // Force settlement
+  roomSp6.finishGame('CIVILIAN', '测试结算');
+  assert.strictEqual(roomSp6.resetToLobby(roomSp6.hostId).ok, true);
+  assert.strictEqual(roomSp6.phase, PHASES.LOBBY);
+  assert.strictEqual(roomSp6.players.length, 5); // 3 + 2 queued
+  assert.ok(roomSp6.players.find(p => p.id === earlySp[0].id));
+  assert.ok(roomSp6.players.find(p => p.id === earlySp[1].id));
+  assert.strictEqual(roomSp6.spectators.length, 0);
+  // Cap at 10: fill lobby to 10, queue more, reset
+  while (roomSp6.players.length < 10) {
+    roomSp6.addPlayer({ nickname: `填满${roomSp6.players.length}` });
+  }
+  const overflowQ = [];
+  for (let i = 1; i <= 3; i++) {
+    const r = roomSp6.addPlayer({ nickname: `溢排队${i}` });
+    assert.strictEqual(r.memberType, 'spectator');
+    overflowQ.push(r.player);
+    roomSp6.spectators.find(s => s.id === r.player.id).joinedAt = i * 100;
+    roomSp6.toggleQueueNext(r.player.id, true);
+  }
+  // Fake a settled game for reset
+  roomSp6.phase = PHASES.SETTLEMENT;
+  roomSp6.winner = 'CIVILIAN';
+  roomSp6.hostId = roomSp6.players[0].id;
+  assert.strictEqual(roomSp6.resetToLobby(roomSp6.hostId).ok, true);
+  assert.strictEqual(roomSp6.players.length, 10);
+  assert.strictEqual(roomSp6.spectators.length, 3); // still full, none promoted
+  assert.ok(roomSp6.spectators.every(s => s.wantToPlay));
+
+  console.log('ALL FSM TESTS PASSED (3p, 6p, taboo, projection, PK, reconnect, abstain-PK, voice-ban, kick, 4p-continue, word-fb, M1-M4, bugfixes, spectators)');
 }
 
 runTests();

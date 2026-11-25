@@ -33,7 +33,10 @@ const DEFAULT_CONFIG = {
   easterEggMode: false,     // M2：房主开关，开启后按概率触发彩蛋局
   easterEggRate: 0.08,      // M2：触发概率（建议 0.05 ~ 0.10）
   allowSpySelfReveal: true, // M3：允许主动发起自爆猜词
-  enableGhostBet: true      // M4：开启观战席上帝押注
+  enableGhostBet: true,     // M4：开启观战席上帝押注
+  allowSpectators: true,    // 是否允许外部观战（对局中或满 10 人时自动落入观战席）
+  maxSpectators: 20,        // 观战席人数上限
+  spectatorGodView: false   // false=推理观战（防报点）；true=上帝视角观战
 };
 
 function normalizeGuessWord(s) {
@@ -78,6 +81,10 @@ function sanitizeConfig(config, playerCount) {
   next.easterEggRate = Number.isFinite(rate) ? Math.max(0.05, Math.min(0.10, rate)) : 0.08;
   next.allowSpySelfReveal = next.allowSpySelfReveal !== false;
   next.enableGhostBet = next.enableGhostBet !== false;
+  next.allowSpectators = next.allowSpectators !== false;
+  const maxSp = Number(next.maxSpectators);
+  next.maxSpectators = Number.isFinite(maxSp) ? Math.max(1, Math.min(50, Math.floor(maxSp))) : 20;
+  next.spectatorGodView = next.spectatorGodView === true;
   // Never accept client-supplied test hooks via room:config
   delete next._forceEasterEggType;
   return next;
@@ -114,6 +121,10 @@ class UndercoverRoom {
     // Players list (ordered by seat 1..10)
     // { id, seat, nickname, avatar, token, online, ready, alive, role, word, disconnectedAt }
     this.players = [];
+
+    // External spectator gallery (completely separate from this.players)
+    // { id, nickname, avatar, token, online, wantToPlay, joinedAt, disconnectedAt }
+    this.spectators = [];
 
     // Per-round state
     this.roundNumber = 0;
@@ -202,9 +213,57 @@ class UndercoverRoom {
     }, seconds * 1000);
   }
 
+  nextFreeSeat() {
+    const usedSeats = new Set(this.players.map(p => p.seat));
+    let seat = 1;
+    while (usedSeats.has(seat) && seat <= 10) seat++;
+    return seat <= 10 ? seat : null;
+  }
+
+  transferHostAway(fromId) {
+    const nextPlayer = this.players.find(p => p.online && p.id !== fromId);
+    if (nextPlayer) {
+      this.hostId = nextPlayer.id;
+      nextPlayer.ready = true;
+      return;
+    }
+    const nextSpectator = this.spectators.find(s => s.online && s.id !== fromId);
+    this.hostId = nextSpectator ? nextSpectator.id : null;
+  }
+
+  addSpectatorMember({ nickname, avatar }) {
+    const nameCheck = validateNickname(nickname);
+    if (!nameCheck.ok) {
+      return { ok: false, error: nameCheck.error };
+    }
+    if (!this.config.allowSpectators) {
+      return {
+        ok: false,
+        error: this.phase !== PHASES.LOBBY ? '对局已开始且未开放观战' : '房间已满且未开放观战'
+      };
+    }
+    if (this.spectators.length >= this.config.maxSpectators) {
+      return { ok: false, error: '观战席已满' };
+    }
+    const spectator = {
+      id: generateId('sp'),
+      nickname: nameCheck.value,
+      avatar,
+      token: generateId('tk'),
+      online: true,
+      wantToPlay: false,
+      joinedAt: Date.now(),
+      disconnectedAt: null
+    };
+    this.spectators.push(spectator);
+    if (!this.hostId) this.hostId = spectator.id;
+    this.emitUpdate();
+    return { ok: true, player: spectator, memberType: 'spectator', reconnected: false };
+  }
+
   addPlayer({ nickname, avatar = '🦊', reconnectToken = null }) {
     this.touch();
-    // 1. Check reconnect by token
+    // 1. Reconnect by token — players first, then spectators
     if (reconnectToken) {
       const existing = this.players.find(p => p.token === reconnectToken);
       if (existing) {
@@ -215,21 +274,28 @@ class UndercoverRoom {
           existing.nickname = nameCheck.value;
         }
         this.emitUpdate();
-        return { ok: true, player: existing, reconnected: true };
+        return { ok: true, player: existing, memberType: 'player', reconnected: true };
+      }
+      const existingSp = this.spectators.find(s => s.token === reconnectToken);
+      if (existingSp) {
+        existingSp.online = true;
+        existingSp.disconnectedAt = null;
+        const nameCheck = validateNickname(nickname);
+        if (nameCheck.ok) existingSp.nickname = nameCheck.value;
+        this.emitUpdate();
+        return { ok: true, player: existingSp, memberType: 'spectator', reconnected: true };
       }
     }
 
-    // 2. Reject new joins once game started or room full
-    if (this.phase !== PHASES.LOBBY) {
-      return { ok: false, error: '对局已开始，无法加入新玩家' };
-    }
-    if (this.players.length >= 10) {
-      return { ok: false, error: '房间已满（最多 10 人）' };
+    // 2. Mid-game or full seats → external spectator gallery
+    if (this.phase !== PHASES.LOBBY || this.players.length >= 10) {
+      return this.addSpectatorMember({ nickname, avatar });
     }
 
-    const usedSeats = new Set(this.players.map(p => p.seat));
-    let seat = 1;
-    while (usedSeats.has(seat)) seat++;
+    const seat = this.nextFreeSeat();
+    if (seat == null) {
+      return this.addSpectatorMember({ nickname, avatar });
+    }
 
     const nameCheck = validateNickname(nickname);
     if (!nameCheck.ok) {
@@ -256,41 +322,187 @@ class UndercoverRoom {
       player.ready = true;
     }
 
-    // Auto-adjust config if player count crossed threshold
     this.config = sanitizeConfig(this.config, this.players.length);
     this.emitUpdate();
-    return { ok: true, player, reconnected: false };
+    return { ok: true, player, memberType: 'player', reconnected: false };
   }
 
-  markDisconnected(playerId) {
-    const player = this.players.find(p => p.id === playerId);
+  markDisconnected(memberId) {
+    const spectator = this.spectators.find(s => s.id === memberId);
+    if (spectator) {
+      spectator.online = false;
+      spectator.disconnectedAt = Date.now();
+      if (this.hostId === memberId) this.transferHostAway(memberId);
+      this.emitUpdate();
+      return;
+    }
+
+    const player = this.players.find(p => p.id === memberId);
     if (!player) return;
     player.online = false;
     player.disconnectedAt = Date.now();
 
-    // Auto-transfer host if host goes offline
-    if (this.hostId === playerId) {
-      const nextOnline = this.players.find(p => p.online && p.id !== playerId);
-      if (nextOnline) {
-        this.hostId = nextOnline.id;
-        nextOnline.ready = true;
-      }
-    }
+    if (this.hostId === memberId) this.transferHostAway(memberId);
     this.emitUpdate();
   }
 
-  removePlayer(playerId) {
-    if (this.phase !== PHASES.LOBBY) {
-      this.markDisconnected(playerId);
+  removePlayer(memberId) {
+    const spIdx = this.spectators.findIndex(s => s.id === memberId);
+    if (spIdx >= 0) {
+      this.spectators.splice(spIdx, 1);
+      if (this.hostId === memberId) this.transferHostAway(memberId);
+      this.emitUpdate();
       return;
     }
-    this.players = this.players.filter(p => p.id !== playerId);
-    if (this.hostId === playerId) {
-      this.hostId = this.players[0] ? this.players[0].id : null;
-      if (this.players[0]) this.players[0].ready = true;
+
+    if (this.phase !== PHASES.LOBBY) {
+      this.markDisconnected(memberId);
+      return;
+    }
+    this.players = this.players.filter(p => p.id !== memberId);
+    if (this.hostId === memberId) this.transferHostAway(memberId);
+    this.config = sanitizeConfig(this.config, this.players.length);
+    this.emitUpdate();
+  }
+
+  /**
+   * Lobby-only: move between player seats and spectator gallery.
+   */
+  switchSeat(memberId, targetRole) {
+    this.touch();
+    if (this.phase !== PHASES.LOBBY) {
+      return { ok: false, error: '仅大厅阶段可换座' };
+    }
+    if (targetRole !== 'player' && targetRole !== 'spectator') {
+      return { ok: false, error: '无效的座位目标' };
+    }
+
+    if (targetRole === 'spectator') {
+      const player = this.players.find(p => p.id === memberId);
+      if (!player) {
+        if (this.spectators.find(s => s.id === memberId)) {
+          return { ok: false, error: '你已在观战席' };
+        }
+        return { ok: false, error: '玩家不存在' };
+      }
+      if (!this.config.allowSpectators) {
+        return { ok: false, error: '本房未开放观战' };
+      }
+      if (this.spectators.length >= this.config.maxSpectators) {
+        return { ok: false, error: '观战席已满' };
+      }
+
+      this.players = this.players.filter(p => p.id !== memberId);
+      const spectator = {
+        id: player.id,
+        nickname: player.nickname,
+        avatar: player.avatar,
+        token: player.token,
+        online: player.online,
+        wantToPlay: false,
+        joinedAt: Date.now(),
+        disconnectedAt: player.disconnectedAt || null
+      };
+      this.spectators.push(spectator);
+
+      if (this.hostId === memberId) this.transferHostAway(memberId);
+      this.config = sanitizeConfig(this.config, this.players.length);
+      this.emitUpdate();
+      return { ok: true, memberType: 'spectator' };
+    }
+
+    // spectator -> player
+    const spectator = this.spectators.find(s => s.id === memberId);
+    if (!spectator) {
+      if (this.players.find(p => p.id === memberId)) {
+        return { ok: false, error: '你已在参战席' };
+      }
+      return { ok: false, error: '观战者不存在' };
+    }
+    if (this.players.length >= 10) {
+      return { ok: false, error: '参战席已满（最多 10 人）' };
+    }
+    const seat = this.nextFreeSeat();
+    if (seat == null) {
+      return { ok: false, error: '参战席已满（最多 10 人）' };
+    }
+
+    this.spectators = this.spectators.filter(s => s.id !== memberId);
+    const player = {
+      id: spectator.id,
+      seat,
+      nickname: spectator.nickname,
+      avatar: spectator.avatar,
+      token: spectator.token,
+      online: spectator.online,
+      ready: false,
+      alive: true,
+      role: null,
+      word: null,
+      disconnectedAt: spectator.disconnectedAt || null
+    };
+    this.players.push(player);
+    this.players.sort((a, b) => a.seat - b.seat);
+    if (!this.hostId) {
+      this.hostId = player.id;
+      player.ready = true;
     }
     this.config = sanitizeConfig(this.config, this.players.length);
     this.emitUpdate();
+    return { ok: true, memberType: 'player' };
+  }
+
+  toggleQueueNext(spectatorId, wantToPlay) {
+    this.touch();
+    const spectator = this.spectators.find(s => s.id === spectatorId);
+    if (!spectator) {
+      return { ok: false, error: '仅外部观战者可预约下一局' };
+    }
+    spectator.wantToPlay = wantToPlay === true;
+    this.emitUpdate();
+    const queue = this.spectators
+      .filter(s => s.online && s.wantToPlay)
+      .sort((a, b) => a.joinedAt - b.joinedAt);
+    const queueIndex = queue.findIndex(s => s.id === spectatorId);
+    return {
+      ok: true,
+      wantToPlay: spectator.wantToPlay,
+      queueIndex: spectator.wantToPlay ? queueIndex + 1 : null,
+      queueLength: queue.length
+    };
+  }
+
+  promoteQueuedSpectators() {
+    const queued = this.spectators
+      .filter(s => s.online && s.wantToPlay)
+      .sort((a, b) => a.joinedAt - b.joinedAt);
+
+    while (this.players.length < 10 && queued.length > 0) {
+      const sp = queued.shift();
+      const seat = this.nextFreeSeat();
+      if (seat == null) break;
+      this.spectators = this.spectators.filter(s => s.id !== sp.id);
+      const player = {
+        id: sp.id,
+        seat,
+        nickname: sp.nickname,
+        avatar: sp.avatar,
+        token: sp.token,
+        online: sp.online,
+        ready: false,
+        alive: true,
+        role: null,
+        word: null,
+        disconnectedAt: sp.disconnectedAt || null
+      };
+      this.players.push(player);
+      if (!this.hostId) {
+        this.hostId = player.id;
+        player.ready = true;
+      }
+    }
+    this.players.sort((a, b) => a.seat - b.seat);
+    this.config = sanitizeConfig(this.config, this.players.length);
   }
 
   updateConfig(actorId, partialConfig) {
@@ -416,6 +628,31 @@ class UndercoverRoom {
       }
     }
     return removed;
+  }
+
+  /**
+   * Drop external spectators offline longer than maxOfflineMs (default 60s).
+   */
+  pruneOfflineSpectators(maxOfflineMs = 60 * 1000) {
+    const now = Date.now();
+    const before = this.spectators.length;
+    const removed = [];
+    this.spectators = this.spectators.filter((s) => {
+      if (s.online || !s.disconnectedAt || now - s.disconnectedAt < maxOfflineMs) {
+        return true;
+      }
+      removed.push({ id: s.id, nickname: s.nickname });
+      if (this.hostId === s.id) this.transferHostAway(s.id);
+      return false;
+    });
+    if (this.spectators.length !== before) this.emitUpdate();
+    return removed;
+  }
+
+  onlineMemberCount() {
+    const playersOnline = this.players.filter(p => p.online).length;
+    const spectatorsOnline = this.spectators.filter(s => s.online).length;
+    return playersOnline + spectatorsOnline;
   }
 
   startGame(actorId) {
@@ -565,6 +802,9 @@ class UndercoverRoom {
    */
   submitSpeech(playerId, { speechType = 'text', content = '', audioUrl = null, durationMs = 0, isTimeout = false }) {
     this.touch();
+    if (this.spectators.find(s => s.id === playerId)) {
+      return { ok: false, error: '观战模式不可参与当前操作' };
+    }
     if (this.phase !== PHASES.SPEAKING && this.phase !== PHASES.TIE_PK) {
       return { ok: false, error: '当前不是发言阶段' };
     }
@@ -654,6 +894,9 @@ class UndercoverRoom {
 
   castVote(voterId, targetId) {
     this.touch();
+    if (this.spectators.find(s => s.id === voterId)) {
+      return { ok: false, error: '观战模式不可参与当前操作' };
+    }
     if (this.phase !== PHASES.VOTING) {
       return { ok: false, error: '当前不是投票阶段' };
     }
@@ -858,6 +1101,9 @@ class UndercoverRoom {
    */
   startSelfReveal(playerId) {
     this.touch();
+    if (this.spectators.find(s => s.id === playerId)) {
+      return { ok: false, error: '观战模式不可参与当前操作' };
+    }
     if (!this.config.allowSpySelfReveal) {
       return { ok: false, error: '本局未开启自爆猜词' };
     }
@@ -965,7 +1211,7 @@ class UndercoverRoom {
   }
 
   /**
-   * M4: Spectator ghost bets (eliminated players only).
+   * M4: Ghost bets — eliminated seat players + external spectators.
    */
   placeGhostBet(playerId, betType, target) {
     this.touch();
@@ -976,10 +1222,13 @@ class UndercoverRoom {
       return { ok: false, error: '当前阶段不可押注' };
     }
     const player = this.players.find(p => p.id === playerId);
-    if (!player) return { ok: false, error: '玩家不存在' };
-    if (player.alive) {
+    const spectator = this.spectators.find(s => s.id === playerId);
+    if (!player && !spectator) return { ok: false, error: '玩家不存在' };
+    if (player && player.alive) {
       return { ok: false, error: '仅已出局玩家可押注' };
     }
+
+    const isBlindExternal = Boolean(spectator) && !this.config.spectatorGodView;
 
     if (!this.ghostBets[playerId]) {
       this.ghostBets[playerId] = { finalWinner: null, byRound: {}, score: 0 };
@@ -996,7 +1245,14 @@ class UndercoverRoom {
       }
       bet.byRound[this.roundNumber] = targetPlayer.id;
       this.emitUpdate();
-      return { ok: true, betType: 'nextOut', target: targetPlayer.id, round: this.roundNumber };
+      return {
+        ok: true,
+        betType: 'nextOut',
+        target: targetPlayer.id,
+        round: this.roundNumber,
+        blindBet: isBlindExternal,
+        note: isBlindExternal ? '推理观战为盲猜押注（不显示词语与身份）' : undefined
+      };
     }
 
     if (betType === 'winner') {
@@ -1008,7 +1264,13 @@ class UndercoverRoom {
       }
       bet.finalWinner = target;
       this.emitUpdate();
-      return { ok: true, betType: 'winner', target };
+      return {
+        ok: true,
+        betType: 'winner',
+        target,
+        blindBet: isBlindExternal,
+        note: isBlindExternal ? '推理观战为盲猜押注（不显示词语与身份）' : undefined
+      };
     }
 
     return { ok: false, error: '未知押注类型' };
@@ -1056,14 +1318,17 @@ class UndercoverRoom {
     }
     if (best && bestScore > 0) {
       const p = this.players.find(x => x.id === best);
-      if (p) {
+      const sp = this.spectators.find(x => x.id === best);
+      const who = p || sp;
+      if (who) {
+        const seatLabel = p ? `${p.seat}号 ` : '观战·';
         this.bestSpectator = {
-          playerId: p.id,
-          seat: p.seat,
-          nickname: p.nickname,
+          playerId: who.id,
+          seat: p ? p.seat : 0,
+          nickname: who.nickname,
           score: bestScore,
           hitCount,
-          label: `观战预言家：${p.seat}号 ${p.nickname}，命中 ${hitCount} 次`
+          label: `观战预言家：${seatLabel}${who.nickname}，命中 ${hitCount} 次`
         };
       }
     } else {
@@ -1139,19 +1404,29 @@ class UndercoverRoom {
   sendGhostMessage(playerId, content) {
     this.touch();
     const player = this.players.find(p => p.id === playerId);
-    if (!player) return { ok: false, error: '玩家不存在' };
+    const spectator = this.spectators.find(s => s.id === playerId);
+    if (!player && !spectator) return { ok: false, error: '玩家不存在' };
     if (this.phase === PHASES.LOBBY) return { ok: false, error: '大厅无需观战频道' };
-    if (player.alive && this.phase !== PHASES.SETTLEMENT) {
+
+    const isSettled = this.phase === PHASES.SETTLEMENT;
+    if (spectator) {
+      // External spectators may chat only with god view (or after settlement)
+      if (!isSettled && !this.config.spectatorGodView) {
+        return { ok: false, error: '推理观战不可使用上帝频道（防剧透）' };
+      }
+    } else if (player.alive && !isSettled) {
       return { ok: false, error: '仅已出局玩家可使用观战频道' };
     }
+
     const clean = String(content || '').trim().slice(0, 100);
     if (!clean) return { ok: false, error: '消息不能为空' };
 
+    const author = player || spectator;
     this.ghostMessages.push({
       id: generateId('gh'),
-      playerId: player.id,
-      seat: player.seat,
-      nickname: player.nickname,
+      playerId: author.id,
+      seat: player ? player.seat : 0,
+      nickname: author.nickname,
       content: clean,
       ts: Date.now()
     });
@@ -1235,6 +1510,11 @@ class UndercoverRoom {
       p.word = null;
       p.ready = p.id === this.hostId;
     });
+    // Auto-seat online spectators who queued for the next game (by joinedAt)
+    this.promoteQueuedSpectators();
+    this.players.forEach(p => {
+      p.ready = p.id === this.hostId;
+    });
     this.emitUpdate();
     return { ok: true };
   }
@@ -1242,17 +1522,32 @@ class UndercoverRoom {
   /**
    * VIEW PROJECTION (Anti-Cheat):
    * Returns a sanitized snapshot strictly scoped to `viewerId`.
+   * viewerType: ALIVE_PLAYER | ELIMINATED_PLAYER | EXTERNAL_SPECTATOR
    */
   getPlayerSnapshot(viewerId) {
     const viewer = this.players.find(p => p.id === viewerId);
+    const externalSpectator = this.spectators.find(s => s.id === viewerId);
     const isSettled = this.phase === PHASES.SETTLEMENT;
-    const isEliminatedSpectator = viewer && !viewer.alive && this.phase !== PHASES.LOBBY;
-    const canSeeAllSecrets = isSettled || isEliminatedSpectator;
+
+    let viewerType = 'ALIVE_PLAYER';
+    if (externalSpectator) {
+      viewerType = 'EXTERNAL_SPECTATOR';
+    } else if (viewer && !viewer.alive && this.phase !== PHASES.LOBBY) {
+      viewerType = 'ELIMINATED_PLAYER';
+    }
+
+    const canSeeAllSecrets =
+      isSettled ||
+      viewerType === 'ELIMINATED_PLAYER' ||
+      (viewerType === 'EXTERNAL_SPECTATOR' && this.config.spectatorGodView);
+
+    // Reasoning external spectators never see secrets; god-view / eliminated / settled do
+    const hideAllSecretsForReasoning =
+      viewerType === 'EXTERNAL_SPECTATOR' && !this.config.spectatorGodView && !isSettled;
 
     const eligibleVoters = this.phase === PHASES.VOTING ? this.getEligibleVoters().map(p => p.id) : [];
 
     // M1: delayed spy teammate reveal — only after surviving at least one completed vote round
-    // (not merely roundNumber bump from self-reveal fail). Muted in easter egg.
     const canKnowTeammate = this.config.delayedSpyReveal
       && this.config.spyCount === 2
       && this.completedVoteRounds >= 1
@@ -1270,14 +1565,43 @@ class UndercoverRoom {
     const publicConfig = { ...this.config };
     delete publicConfig._forceEasterEggType;
 
-    const myGhostBet = canSeeAllSecrets && viewer && this.ghostBets[viewer.id]
+    const betOwnerId = viewer ? viewer.id : (externalSpectator ? externalSpectator.id : null);
+    const canSeeOwnBet = Boolean(betOwnerId) && (
+      canSeeAllSecrets ||
+      viewerType === 'EXTERNAL_SPECTATOR' // blind bet still shows own stakes
+    );
+    const myGhostBet = canSeeOwnBet && this.ghostBets[betOwnerId]
       ? {
-          finalWinner: this.ghostBets[viewer.id].finalWinner,
-          byRound: { ...this.ghostBets[viewer.id].byRound },
-          score: this.ghostBets[viewer.id].score || 0,
-          currentRoundBet: this.ghostBets[viewer.id].byRound[this.roundNumber] || null
+          finalWinner: this.ghostBets[betOwnerId].finalWinner,
+          byRound: { ...this.ghostBets[betOwnerId].byRound },
+          score: this.ghostBets[betOwnerId].score || 0,
+          currentRoundBet: this.ghostBets[betOwnerId].byRound[this.roundNumber] || null
         }
       : null;
+
+    const queueOrdered = this.spectators
+      .filter(s => s.online && s.wantToPlay)
+      .sort((a, b) => a.joinedAt - b.joinedAt);
+    const myQueueIndex = externalSpectator && externalSpectator.wantToPlay
+      ? queueOrdered.findIndex(s => s.id === externalSpectator.id) + 1
+      : null;
+
+    const spectatorsBrief = this.spectators.map(s => ({
+      id: s.id,
+      nickname: s.nickname,
+      avatar: s.avatar,
+      online: s.online,
+      wantToPlay: s.wantToPlay,
+      joinedAt: s.joinedAt
+    }));
+
+    let myWord = null;
+    if (viewer && this.phase !== PHASES.LOBBY) {
+      myWord = viewer.word;
+    }
+    if (hideAllSecretsForReasoning || (viewerType === 'EXTERNAL_SPECTATOR' && !isSettled && !this.config.spectatorGodView)) {
+      myWord = null;
+    }
 
     return {
       roomCode: this.roomCode,
@@ -1293,16 +1617,17 @@ class UndercoverRoom {
       eligibleVoters,
       votedPlayerIds: Object.keys(this.votes),
       myVote: viewer ? (this.votes[viewer.id] || null) : null,
-      myId: viewer ? viewer.id : null,
-      myWord: viewer && this.phase !== PHASES.LOBBY ? viewer.word : null,
+      myId: viewer ? viewer.id : (externalSpectator ? externalSpectator.id : null),
+      viewerType,
+      myWord,
       myRole: canSeeAllSecrets && viewer ? viewer.role : null,
       spyTeammates,
       guessingPlayerId: this.guessingPlayerId,
       selfRevealNotice: this.selfRevealNotice,
       wordReveal: canSeeAllSecrets ? this.currentWordPair : null,
       easterEggType: isSettled ? this.easterEggType : null,
-      myWordFeedback: viewer && this.phase === PHASES.SETTLEMENT
-        ? (this.wordFeedbacks[viewer.id] || null)
+      myWordFeedback: (viewer || externalSpectator) && this.phase === PHASES.SETTLEMENT
+        ? (this.wordFeedbacks[betOwnerId] || null)
         : null,
       wordFeedbackStats: this.phase === PHASES.SETTLEMENT
         ? this.getWordFeedbackStats()
@@ -1316,14 +1641,19 @@ class UndercoverRoom {
         ready: p.ready,
         alive: p.alive,
         isHost: p.id === this.hostId,
-        // Never leak other players' roles or words unless settled or viewer is eliminated spectator
-        role: canSeeAllSecrets ? p.role : (this.config.revealRoleOnOut && !p.alive ? p.role : null),
-        word: canSeeAllSecrets ? p.word : null
+        role: hideAllSecretsForReasoning
+          ? null
+          : (canSeeAllSecrets ? p.role : (this.config.revealRoleOnOut && !p.alive ? p.role : null)),
+        word: canSeeAllSecrets && !hideAllSecretsForReasoning ? p.word : null
       })),
+      spectators: spectatorsBrief,
+      spectatorCount: this.spectators.length,
+      myWantToPlay: externalSpectator ? externalSpectator.wantToPlay : false,
+      myQueueIndex,
       speeches: this.speeches,
       lastVoteSummary: this.lastVoteSummary,
-      ghostMessages: canSeeAllSecrets ? this.ghostMessages : [],
-      ghostBets: canSeeAllSecrets ? this.ghostBets : null,
+      ghostMessages: canSeeAllSecrets && !hideAllSecretsForReasoning ? this.ghostMessages : [],
+      ghostBets: canSeeAllSecrets && !hideAllSecretsForReasoning ? this.ghostBets : null,
       myGhostBet,
       bestSpectator: isSettled ? this.bestSpectator : null,
       ghostBetRefundNote: isSettled ? (this.ghostBetRefundNote || null) : null,
