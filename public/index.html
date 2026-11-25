@@ -16,6 +16,24 @@
     }
     .need-attention { animation: pulse-ring 1.4s ease-out 2; border-color: #2dd4bf !important; }
     #overlay-root:empty { display: none; }
+    .avatar-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 0.5rem;
+    }
+    .avatar-pick {
+      aspect-ratio: 1;
+      min-height: 2.75rem;
+      font-size: 1.35rem;
+    }
+    .online-dot {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 9999px;
+      flex-shrink: 0;
+    }
+    .online-dot.is-on { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2); }
+    .online-dot.is-off { background: #94a3b8; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex justify-center">
@@ -60,6 +78,61 @@
       return UndercoverShared.validateNickname(raw);
     }
 
+    function readRoomFromUrl() {
+      try {
+        const q = new URLSearchParams(location.search || '');
+        let code = (q.get('room') || q.get('code') || '').trim();
+        if (!code && location.hash) {
+          const hq = new URLSearchParams(String(location.hash).replace(/^#/, ''));
+          code = (hq.get('room') || hq.get('code') || '').trim();
+        }
+        if (/^\d{4}$/.test(code)) return code;
+      } catch (_) {}
+      return '';
+    }
+
+    function roomInviteUrl(roomCode) {
+      const u = new URL(location.href);
+      u.searchParams.set('room', String(roomCode || ''));
+      u.hash = '';
+      return u.toString();
+    }
+
+    async function shareRoomLink(roomCode) {
+      const url = roomInviteUrl(roomCode);
+      const title = '谁是卧底 · 一起开黑';
+      const text = `房间号 ${roomCode}，点开即可进房：`;
+      try {
+        if (navigator.share) {
+          await navigator.share({ title, text, url });
+          return showToast('已打开系统分享', true);
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(`${text}\n${url}`);
+          return showToast('邀请链接已复制', true);
+        }
+      } catch (_) {}
+      // 兜底：可选中的临时输入框
+      const ta = document.createElement('textarea');
+      ta.value = `${text}\n${url}`;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        showToast('邀请链接已复制', true);
+      } catch (_) {
+        showToast('请手动复制：' + url);
+      }
+      document.body.removeChild(ta);
+    }
+
     try {
       const saved = JSON.parse(localStorage.getItem('undercover_session') || 'null');
       if (saved) {
@@ -78,6 +151,8 @@
         }
         if (typeof prefs.soundOn === 'boolean') state.soundOn = prefs.soundOn;
       }
+      const urlRoom = readRoomFromUrl();
+      if (urlRoom) state.joinCodeInput = urlRoom;
     } catch (_) {}
 
     function savePrefs() {
@@ -148,10 +223,11 @@
           master.gain.value = 1;
           master.connect(ctx.destination);
           bgmGain = ctx.createGain();
-          bgmGain.gain.value = 0.045;
+          // BGM 远低于音效：主音量再压一层
+          bgmGain.gain.value = 0.028;
           bgmGain.connect(master);
           sfxGain = ctx.createGain();
-          sfxGain.gain.value = 0.22;
+          sfxGain.gain.value = 0.24;
           sfxGain.connect(master);
         }
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
@@ -175,26 +251,36 @@
         osc.stop(t0 + dur + 0.02);
       }
 
-      function chord(freqs, dur, vol = 0.04) {
-        freqs.forEach((f, i) => tone(f, dur, 'sine', bgmGain, vol, i * 0.01));
+      function chord(freqs, dur, vol = 0.04, type = 'sine') {
+        freqs.forEach((f, i) => tone(f, dur, type, bgmGain, vol, i * 0.015));
       }
 
+      // 悬疑卧底氛围：小调琶音 + 低音垫，节奏偏慢，音量压过音效
       function startBgm() {
         if (!state.soundOn || !ensure()) return;
         if (bgmTimer) return;
-        const progression = [
-          [196, 247, 294],
-          [220, 277, 330],
-          [175, 220, 262],
-          [165, 208, 247]
+        const pads = [
+          [110, 165, 196],
+          [98, 147, 185],
+          [123, 185, 233],
+          [92, 138, 174]
+        ];
+        const motifs = [
+          [196, 233, 262, 233],
+          [185, 220, 247, 220],
+          [208, 247, 277, 247],
+          [174, 208, 233, 208]
         ];
         const tick = () => {
           if (!state.soundOn || !ctx) return;
-          chord(progression[step % progression.length], 1.6, 0.035);
+          const i = step % pads.length;
+          chord(pads[i], 2.4, 0.018, 'triangle');
+          const motif = motifs[i];
+          motif.forEach((f, j) => tone(f, 0.55, 'sine', bgmGain, 0.022, 0.18 + j * 0.42));
           step++;
         };
         tick();
-        bgmTimer = setInterval(tick, 1800);
+        bgmTimer = setInterval(tick, 2600);
       }
 
       function stopBgm() {
@@ -381,6 +467,14 @@
           if (msg.categories) state.categories = msg.categories;
           saveSession();
           sfx.join();
+          try {
+            const clean = new URL(location.href);
+            if (clean.searchParams.has('room') || clean.searchParams.has('code')) {
+              clean.searchParams.delete('room');
+              clean.searchParams.delete('code');
+              history.replaceState(null, '', clean.pathname + (clean.search || '') + clean.hash);
+            }
+          } catch (_) {}
           if (msg.reconnected) showToast('已自动重连回房间', true);
         } else if (msg.type === 'word:feedback:ack') {
           showToast(msg.rating === 'up' ? '已点赞这组词' : '已点踩这组词', true);
@@ -438,12 +532,12 @@
             <p class="text-slate-400 text-sm mt-2">输入好友房间号，一起找出卧底</p>
           </div>
 
-          <!-- 资料：紧凑一行 -->
+          <!-- 资料：头像一行五个 + 昵称 -->
           <div class="mb-4 p-3.5 rounded-2xl bg-slate-800/50 border ${nickNeed || avatarNeed ? 'border-teal-500/50' : 'border-slate-700/70'} space-y-3">
-            <div class="flex items-center gap-2">
-              <span class="text-xs ${avatarNeed ? 'text-teal-300 font-semibold' : 'text-slate-500'}">头像${avatarNeed ? ' · 请点选' : ''}</span>
-              <div class="flex flex-wrap gap-1.5 flex-1 ${avatarNeed ? 'need-attention rounded-lg p-0.5' : ''}">
-                ${AVATARS.map(a => `<button data-avatar="${a}" class="w-8 h-8 rounded-lg text-base flex items-center justify-center border ${state.selectedAvatar === a ? 'bg-teal-600/30 border-teal-400' : 'bg-slate-900/70 border-slate-700'}">${a}</button>`).join('')}
+            <div>
+              <div class="text-xs mb-2 ${avatarNeed ? 'text-teal-300 font-semibold' : 'text-slate-500'}">头像${avatarNeed ? ' · 请点选' : ''}</div>
+              <div class="avatar-grid ${avatarNeed ? 'need-attention rounded-xl p-1' : ''}">
+                ${AVATARS.map(a => `<button type="button" data-avatar="${a}" class="avatar-pick rounded-xl flex items-center justify-center border transition ${state.selectedAvatar === a ? 'bg-teal-600/35 border-teal-400 ring-2 ring-teal-400/40' : 'bg-slate-900/70 border-slate-700 hover:border-slate-500'}">${a}</button>`).join('')}
               </div>
             </div>
             <div>
@@ -456,7 +550,7 @@
           <!-- 主操作：加入房间 -->
           <div class="p-5 rounded-2xl bg-teal-500/10 border border-teal-500/35 space-y-3">
             <div class="text-sm font-bold text-teal-200">加入房间</div>
-            <p class="text-xs text-slate-400 -mt-1">向房主要 4 位房间号</p>
+            <p class="text-xs text-slate-400 -mt-1">输入 4 位房间号，或打开好友分享的链接自动填入</p>
             <input id="inp-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" value="${state.joinCodeInput}" placeholder="····" class="w-full px-4 py-4 rounded-xl bg-slate-950 border border-teal-500/40 text-white text-center text-2xl font-mono tracking-[0.4em] focus:outline-none focus:border-teal-400 placeholder:tracking-[0.4em] placeholder:text-slate-600" />
             <button id="btn-join" class="w-full py-3.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-base transition shadow-lg shadow-teal-900/30">进入房间</button>
           </div>
@@ -479,12 +573,13 @@
       const can2Spy = n >= 6;
       const allReady = s.players.every(p => p.isHost || p.ready);
       return `
-        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
-          <div>
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between gap-2">
+          <div class="min-w-0">
             <div class="text-xs text-slate-400">房间号（分享给好友）</div>
             <div class="text-2xl font-mono font-bold tracking-widest text-teal-400">${s.roomCode}</div>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="btn-share-room" class="px-3 py-1.5 rounded-lg bg-teal-500/15 border border-teal-500/40 text-teal-200 text-xs font-medium">分享链接</button>
             ${soundToggleBtn()}
             <button id="btn-leave" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs">退出</button>
           </div>
@@ -497,19 +592,22 @@
             </div>
             <div class="grid grid-cols-2 gap-2.5">
               ${s.players.map(p => `
-                <div class="p-3 rounded-xl bg-slate-800/70 border ${p.id === s.myId ? 'border-teal-500/60' : (!p.online ? 'border-rose-500/40' : 'border-slate-700/70')} flex items-center gap-2.5">
-                  <div class="w-9 h-9 rounded-full bg-slate-900 flex items-center justify-center text-lg">${p.avatar}</div>
+                <div class="p-3 rounded-xl bg-slate-800/70 border ${p.id === s.myId ? 'border-teal-500/60' : (!p.online ? 'border-slate-600/80' : 'border-slate-700/70')} flex items-center gap-2.5 ${!p.online ? 'opacity-80' : ''}">
+                  <div class="relative">
+                    <div class="w-9 h-9 rounded-full bg-slate-900 flex items-center justify-center text-lg">${p.avatar}</div>
+                    <span class="online-dot absolute -right-0.5 -bottom-0.5 ${p.online ? 'is-on' : 'is-off'}" title="${p.online ? '在线' : '离线'}"></span>
+                  </div>
                   <div class="min-w-0 flex-1">
                     <div class="text-sm font-semibold truncate">${p.seat}号 ${p.nickname}</div>
-                    <div class="text-xs ${!p.online ? 'text-rose-400' : (p.isHost ? 'text-amber-400' : (p.ready ? 'text-teal-400' : 'text-slate-500'))}">
-                      ${!p.online ? '离线' : (p.isHost ? '房主' : (p.ready ? '已准备' : '未准备'))}
+                    <div class="text-xs flex items-center gap-1.5 ${!p.online ? 'text-slate-400' : (p.isHost ? 'text-amber-400' : (p.ready ? 'text-teal-400' : 'text-slate-500'))}">
+                      <span>${!p.online ? '离线' : (p.isHost ? '房主' : (p.ready ? '已准备' : '未准备'))}</span>
                     </div>
                   </div>
                   ${isHost && p.id !== s.myId ? `<button data-kick="${p.id}" class="shrink-0 px-2 py-1 rounded-lg text-[10px] bg-slate-900 border border-slate-600 text-slate-400 hover:text-rose-300 hover:border-rose-400">踢出</button>` : ''}
                 </div>
               `).join('')}
             </div>
-            ${isHost && s.players.some(p => !p.online) ? `<p class="text-[11px] text-rose-300/90 mt-2">有玩家离线：可踢出，或等待其重连；离线超过约 90 秒会自动清理。</p>` : ''}
+            ${isHost && s.players.some(p => !p.online) ? `<p class="text-[11px] text-slate-400 mt-2">有玩家离线：可踢出，或等待其重连；离线超过约 90 秒会自动清理。</p>` : ''}
           </div>
 
           <div class="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/70 space-y-3">
@@ -586,10 +684,13 @@
             const voted = s.votedPlayerIds.includes(p.id);
             return `
               <div class="shrink-0 w-16 p-1.5 rounded-xl text-center border ${active ? 'border-amber-400 bg-amber-500/10' : (p.alive ? 'border-slate-800 bg-slate-800/40' : 'border-slate-800/50 bg-slate-950/60 opacity-50')}">
-                <div class="text-lg">${p.avatar}</div>
+                <div class="relative inline-flex">
+                  <div class="text-lg leading-none">${p.avatar}</div>
+                  <span class="online-dot absolute -right-1 -bottom-0.5 ${p.online ? 'is-on' : 'is-off'}"></span>
+                </div>
                 <div class="text-[11px] font-medium truncate ${p.id === s.myId ? 'text-teal-300' : 'text-slate-200'}">${p.seat}号</div>
-                <div class="text-[10px] ${!p.alive ? 'text-rose-400' : (active ? 'text-amber-300' : (voted ? 'text-teal-400' : 'text-slate-500'))}">
-                  ${!p.alive ? '出局' : (active ? '发言中' : (s.phase === 'VOTING' && voted ? '已投' : (p.role ? (p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')) : '存活')))}
+                <div class="text-[10px] ${!p.alive ? 'text-rose-400' : (!p.online ? 'text-slate-400' : (active ? 'text-amber-300' : (voted ? 'text-teal-400' : 'text-slate-500')))}">
+                  ${!p.alive ? '出局' : (!p.online ? '离线' : (active ? '发言中' : (s.phase === 'VOTING' && voted ? '已投' : (p.role ? (p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')) : '存活'))))}
                 </div>
               </div>
             `;
@@ -743,6 +844,11 @@
       if (s.phase === 'LOBBY') {
         app.innerHTML = renderLobby(s);
         bindSoundToggle();
+        document.getElementById('btn-share-room')?.addEventListener('click', () => {
+          sfx.unlock();
+          sfx.click();
+          shareRoomLink(s.roomCode);
+        });
         document.getElementById('btn-leave').addEventListener('click', () => { sfx.click(); send({ type: 'room:leave' }); });
         app.querySelectorAll('[data-kick]').forEach(b => {
           b.addEventListener('click', () => { sfx.click(); send({ type: 'room:kick', targetPlayerId: b.dataset.kick }); });
