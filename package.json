@@ -1,0 +1,13 @@
+{
+  "name": "undercover-h5-online",
+  "version": "1.0.0",
+  "description": "3-10 player online H5 Who is the Undercover (谁是卧底) with zero-dependency WebSocket server, text speaking, and V2 voice clip hook",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/fsm.test.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

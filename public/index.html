@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>谁是卧底 · 多端联机 H5</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif; }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 12px); }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex justify-center">
+  <div id="app" class="w-full max-w-md min-h-screen bg-slate-900 flex flex-col relative shadow-2xl border-x border-slate-800"></div>
+  <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 hidden px-4 py-2 rounded-full bg-rose-600 text-white text-sm font-medium shadow-lg"></div>
+
+  <script>
+    const AVATARS = ['🦊','🐼','🐯','🐸','🦁','🐨','🐙','🦄','🐶','🐱'];
+    const state = {
+      ws: null,
+      connected: false,
+      roomCode: '',
+      playerId: '',
+      reconnectToken: '',
+      categories: ['全部','日常美食','生活物品','影视动漫','职场休闲'],
+      snapshot: null,
+      wordHidden: false,
+      clockOffset: 0,
+      selectedAvatar: AVATARS[Math.floor(Math.random() * AVATARS.length)],
+      nickname: '',
+      joinCodeInput: '',
+      activeTab: 'public' // 'public' | 'ghost'
+    };
+
+    try {
+      const saved = JSON.parse(localStorage.getItem('undercover_session') || 'null');
+      if (saved) {
+        state.roomCode = saved.roomCode || '';
+        state.reconnectToken = saved.reconnectToken || '';
+        state.nickname = saved.nickname || '';
+      }
+    } catch (_) {}
+
+    function saveSession() {
+      try {
+        localStorage.setItem('undercover_session', JSON.stringify({
+          roomCode: state.roomCode,
+          reconnectToken: state.reconnectToken,
+          nickname: state.nickname
+        }));
+      } catch (_) {}
+    }
+
+    function clearSession(keepNickname = true) {
+      state.roomCode = '';
+      state.reconnectToken = '';
+      state.playerId = '';
+      state.snapshot = null;
+      try {
+        if (keepNickname && state.nickname) {
+          localStorage.setItem('undercover_session', JSON.stringify({ nickname: state.nickname }));
+        } else {
+          localStorage.removeItem('undercover_session');
+        }
+      } catch (_) {}
+    }
+
+    function showToast(msg, isInfo = false) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full text-white text-sm font-medium shadow-lg ${isInfo ? 'bg-teal-600' : 'bg-rose-600'}`;
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => el.classList.add('hidden'), 2800);
+    }
+
+    function connectWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${location.host}`);
+      state.ws = ws;
+      ws.onopen = () => {
+        state.connected = true;
+        if (state.roomCode && state.reconnectToken) {
+          send({ type: 'room:join', roomCode: state.roomCode, nickname: state.nickname, reconnectToken: state.reconnectToken });
+        }
+        render();
+      };
+      ws.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'error') {
+          if (msg.code === 'ROOM_NOT_FOUND' || msg.code === 'ROOM_INVALID' ||
+              (msg.message && /不存在|已关闭/.test(msg.message))) {
+            clearSession(true);
+            render();
+          }
+          return showToast(msg.message);
+        }
+        if (msg.type === 'session:joined') {
+          state.roomCode = msg.roomCode;
+          state.playerId = msg.playerId;
+          state.reconnectToken = msg.reconnectToken;
+          if (msg.categories) state.categories = msg.categories;
+          saveSession();
+          if (msg.reconnected) showToast('已自动重连回房间', true);
+        } else if (msg.type === 'session:left' || msg.type === 'session:kicked') {
+          if (msg.type === 'session:kicked') showToast(msg.message || '你已被移出房间');
+          clearSession(true);
+          render();
+        } else if (msg.type === 'room:snapshot') {
+          state.snapshot = msg.data;
+          state.clockOffset = (msg.data.serverNow || Date.now()) - Date.now();
+          render();
+        }
+      };
+      ws.onclose = () => {
+        state.connected = false;
+        render();
+        setTimeout(connectWs, 2000);
+      };
+    }
+
+    function send(payload) {
+      if (state.ws && state.ws.readyState === 1) {
+        state.ws.send(JSON.stringify(payload));
+      } else {
+        showToast('网络重连中，请稍候...');
+      }
+    }
+
+    function getRemainSec() {
+      const s = state.snapshot;
+      if (!s || !s.phaseEndsAt) return null;
+      return Math.max(0, Math.ceil((s.phaseEndsAt - (Date.now() + state.clockOffset)) / 1000));
+    }
+
+    setInterval(() => {
+      const badge = document.getElementById('timer-badge');
+      if (badge) {
+        const sec = getRemainSec();
+        badge.textContent = sec !== null ? `${sec}s` : '';
+      }
+    }, 500);
+
+    function renderHome() {
+      return `
+        <div class="p-6 flex-1 flex flex-col justify-center">
+          <div class="mb-8 text-center">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-500/15 text-teal-300 text-xs font-medium mb-3">
+              3–10 人多端联机 · H5 文字版
+            </div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-white">谁是卧底</h1>
+            <p class="text-slate-400 text-sm mt-2">创建房间邀请好友，用一句话隐藏自己、找出卧底</p>
+          </div>
+
+          <div class="space-y-4 bg-slate-800/70 p-5 rounded-2xl border border-slate-700/80">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1.5">选择头像</label>
+              <div class="flex flex-wrap gap-2">
+                ${AVATARS.map(a => `<button data-avatar="${a}" class="w-9 h-9 rounded-xl text-lg flex items-center justify-center border ${state.selectedAvatar === a ? 'bg-teal-600/30 border-teal-400' : 'bg-slate-900/70 border-slate-700'}">${a}</button>`).join('')}
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1.5">你的昵称</label>
+              <input id="inp-nick" type="text" maxlength="12" value="${state.nickname}" placeholder="输入昵称（如：老王）" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:outline-none focus:border-teal-400" />
+            </div>
+            <button id="btn-create" class="w-full py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm transition">创建新房间</button>
+            <div class="flex items-center gap-2 pt-2 border-t border-slate-700/80">
+              <input id="inp-code" type="text" maxlength="6" value="${state.joinCodeInput}" placeholder="输入 4 位房间号" class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm font-mono tracking-widest focus:outline-none focus:border-teal-400" />
+              <button id="btn-join" class="px-5 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm">加入</button>
+            </div>
+          </div>
+          <p class="text-center text-xs text-slate-500 mt-6">${state.connected ? '● 已连接联机服务' : '○ 正在连接服务...'}</p>
+        </div>
+      `;
+    }
+
+    function renderLobby(s) {
+      const me = s.players.find(p => p.id === s.myId);
+      const isHost = s.hostId === s.myId;
+      const n = s.players.length;
+      const can2Spy = n >= 6;
+      const allReady = s.players.every(p => p.isHost || p.ready);
+      return `
+        <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+          <div>
+            <div class="text-xs text-slate-400">房间号（分享给好友）</div>
+            <div class="text-2xl font-mono font-bold tracking-widest text-teal-400">${s.roomCode}</div>
+          </div>
+          <button id="btn-leave" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs">退出</button>
+        </div>
+
+        <div class="p-4 flex-1 overflow-y-auto space-y-5">
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-xs font-medium text-slate-400">玩家座位（${n} / 10 人，满 3 人开局）</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2.5">
+              ${s.players.map(p => `
+                <div class="p-3 rounded-xl bg-slate-800/70 border ${p.id === s.myId ? 'border-teal-500/60' : (!p.online ? 'border-rose-500/40' : 'border-slate-700/70')} flex items-center gap-2.5">
+                  <div class="w-9 h-9 rounded-full bg-slate-900 flex items-center justify-center text-lg">${p.avatar}</div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-semibold truncate">${p.seat}号 ${p.nickname}</div>
+                    <div class="text-xs ${!p.online ? 'text-rose-400' : (p.isHost ? 'text-amber-400' : (p.ready ? 'text-teal-400' : 'text-slate-500'))}">
+                      ${!p.online ? '离线' : (p.isHost ? '房主' : (p.ready ? '已准备' : '未准备'))}
+                    </div>
+                  </div>
+                  ${isHost && p.id !== s.myId ? `<button data-kick="${p.id}" class="shrink-0 px-2 py-1 rounded-lg text-[10px] bg-slate-900 border border-slate-600 text-slate-400 hover:text-rose-300 hover:border-rose-400">踢出</button>` : ''}
+                </div>
+              `).join('')}
+            </div>
+            ${isHost && s.players.some(p => !p.online) ? `<p class="text-[11px] text-rose-300/90 mt-2">有玩家离线：可踢出，或等待其重连；离线超过约 90 秒会自动清理。</p>` : ''}
+          </div>
+
+          <div class="p-4 rounded-2xl bg-slate-800/50 border border-slate-700/70 space-y-3">
+            <div class="text-xs font-semibold text-slate-300">房间规则配置 ${isHost ? '' : '（仅房主可调）'}</div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">卧底人数</span>
+              <div class="flex gap-2">
+                <button ${!isHost ? 'disabled' : ''} data-cfg-spy="1" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.spyCount === 1 ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-300'}">1 卧底</button>
+                <button ${!isHost || !can2Spy ? 'disabled' : ''} data-cfg-spy="2" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.spyCount === 2 ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-500'} ${!can2Spy ? 'opacity-40' : ''}">2 卧底${can2Spy ? '' : '(6人+)'}</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">白板角色（无词）</span>
+              <button ${!isHost || !can2Spy ? 'disabled' : ''} id="btn-cfg-blank" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.blankCount === 1 ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'} ${!can2Spy ? 'opacity-40' : ''}">${s.config.blankCount === 1 ? '开启 (1人)' : '关闭'}</button>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">词库主题</span>
+              <select id="sel-cat" ${!isHost ? 'disabled' : ''} class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200">
+                ${state.categories.map(c => `<option value="${c}" ${s.config.category === c ? 'selected' : ''}>${c}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-4 border-t border-slate-800 safe-bottom">
+          ${isHost
+            ? `<button id="btn-start" ${n < 3 || !allReady ? 'disabled' : ''} class="w-full py-3.5 rounded-xl font-bold text-sm ${n >= 3 && allReady ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-500'}">${n < 3 ? '至少需要 3 人才能开始' : (!allReady ? '等待所有玩家准备...' : '开始游戏')}</button>`
+            : `<button id="btn-ready" class="w-full py-3.5 rounded-xl font-bold text-sm ${me && me.ready ? 'bg-slate-700 text-slate-200' : 'bg-teal-500 text-slate-950'}">${me && me.ready ? '取消准备' : '点击准备'}</button>`
+          }
+        </div>
+      `;
+    }
+
+    function renderGame(s) {
+      const me = s.players.find(p => p.id === s.myId);
+      const isMyTurn = (s.phase === 'SPEAKING' || s.phase === 'TIE_PK') && s.currentSpeakerId === s.myId;
+      const canVote = s.phase === 'VOTING' && s.eligibleVoters.includes(s.myId) && !s.myVote;
+      const isGhost = me && !me.alive && s.phase !== 'SETTLEMENT';
+      const speaker = s.players.find(p => p.id === s.currentSpeakerId);
+      const remain = getRemainSec();
+
+      const phaseLabel = {
+        SPEAKING: `第 ${s.roundNumber} 轮发言${s.players.length === 3 ? ` (${s.speakingSubRound}/2)` : ''}`,
+        TIE_PK: '平票 PK 发言',
+        VOTING: `第 ${s.roundNumber} 轮投票`,
+        SETTLEMENT: '对局结算'
+      }[s.phase] || s.phase;
+
+      return `
+        <!-- Top Status Bar -->
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded-md bg-teal-500/20 text-teal-300 text-xs font-semibold">${phaseLabel}</span>
+            <span class="text-xs text-slate-400 font-mono">#${s.roomCode}</span>
+          </div>
+          <span id="timer-badge" class="text-sm font-mono font-bold text-amber-400">${remain !== null ? remain + 's' : ''}</span>
+        </div>
+
+        <!-- My Secret Word Card -->
+        <div class="px-4 py-3 bg-slate-800/40 border-b border-slate-800 flex items-center justify-between">
+          <div>
+            <div class="text-[11px] text-slate-400">你的词语（仅自己可见）</div>
+            <div class="text-lg font-extrabold tracking-wide ${state.wordHidden ? 'text-slate-600' : 'text-teal-300'}">
+              ${state.wordHidden ? '••••••' : (s.myWord === '' ? '【白板 · 无词语】' : (s.myWord || '观战中'))}
+            </div>
+          </div>
+          <button id="btn-toggle-word" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 border border-slate-700">${state.wordHidden ? '显示词语' : '隐藏防窥'}</button>
+        </div>
+
+        <!-- Players Strip -->
+        <div class="px-4 py-2.5 border-b border-slate-800 flex gap-2 overflow-x-auto">
+          ${s.players.map(p => {
+            const active = p.id === s.currentSpeakerId;
+            const voted = s.votedPlayerIds.includes(p.id);
+            return `
+              <div class="shrink-0 w-16 p-1.5 rounded-xl text-center border ${active ? 'border-amber-400 bg-amber-500/10' : (p.alive ? 'border-slate-800 bg-slate-800/40' : 'border-slate-800/50 bg-slate-950/60 opacity-50')}">
+                <div class="text-lg">${p.avatar}</div>
+                <div class="text-[11px] font-medium truncate ${p.id === s.myId ? 'text-teal-300' : 'text-slate-200'}">${p.seat}号</div>
+                <div class="text-[10px] ${!p.alive ? 'text-rose-400' : (active ? 'text-amber-300' : (voted ? 'text-teal-400' : 'text-slate-500'))}">
+                  ${!p.alive ? '出局' : (active ? '发言中' : (s.phase === 'VOTING' && voted ? '已投' : (p.role ? (p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')) : '存活')))}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <!-- Main Feed / Voting / Settlement -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-3">
+          ${s.lastVoteSummary ? `<div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">${s.lastVoteSummary.note}</div>` : ''}
+
+          ${s.phase === 'SETTLEMENT' ? `
+            <div class="p-5 rounded-2xl bg-gradient-to-br from-teal-900/50 to-slate-800 border border-teal-500/40 text-center space-y-3">
+              <div class="text-2xl font-extrabold text-white">${s.winner === 'CIVILIAN' ? '平民阵营获胜' : '卧底阵营获胜'}</div>
+              <p class="text-sm text-teal-200">${s.winReason}</p>
+              <div class="grid grid-cols-2 gap-2 pt-2 text-xs">
+                <div class="p-2.5 rounded-xl bg-slate-900/70"><div class="text-slate-400">平民词</div><div class="text-base font-bold text-teal-300 mt-0.5">${s.wordReveal ? s.wordReveal.civilianWord : ''}</div></div>
+                <div class="p-2.5 rounded-xl bg-slate-900/70"><div class="text-slate-400">卧底词</div><div class="text-base font-bold text-amber-300 mt-0.5">${s.wordReveal ? s.wordReveal.undercoverWord : ''}</div></div>
+              </div>
+              <div class="text-left pt-2 space-y-1.5">
+                ${s.players.map(p => `<div class="flex justify-between text-xs px-2 py-1 rounded bg-slate-900/50"><span>${p.seat}号 ${p.nickname}</span><span class="${p.role === 'UNDERCOVER' ? 'text-amber-400 font-bold' : (p.role === 'BLANK' ? 'text-indigo-300' : 'text-teal-300')}">${p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')} · ${p.word || '无词'}</span></div>`).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${s.phase === 'VOTING' ? `
+            <div class="p-4 rounded-2xl bg-slate-800/70 border border-slate-700 space-y-3">
+              <div class="text-sm font-bold text-white">${canVote ? '请投票选出你怀疑的卧底' : (s.myVote ? '你已完成投票，等待其他玩家...' : '本轮你无需投票，等待结果...')}</div>
+              <div class="grid grid-cols-2 gap-2">
+                ${s.players.filter(p => p.alive && p.id !== s.myId && (s.pkCandidates.length === 0 || s.pkCandidates.includes(p.id))).map(p => `
+                  <button data-vote="${p.id}" ${!canVote ? 'disabled' : ''} class="p-3 rounded-xl border text-left transition ${s.myVote === p.id ? 'bg-rose-500/20 border-rose-400' : 'bg-slate-900/80 border-slate-700 hover:border-teal-400'} ${!canVote ? 'opacity-60' : ''}">
+                    <div class="text-sm font-bold">${p.avatar} ${p.seat}号 ${p.nickname}</div>
+                    <div class="text-[11px] text-slate-400 mt-0.5">${s.myVote === p.id ? '已选择' : '点击投票'}</div>
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${isGhost ? `
+            <div class="flex gap-2 border-b border-slate-800 pb-2">
+              <button data-tab="public" class="px-3 py-1 rounded-lg text-xs font-semibold ${state.activeTab === 'public' ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-300'}">场上发言</button>
+              <button data-tab="ghost" class="px-3 py-1 rounded-lg text-xs font-semibold ${state.activeTab === 'ghost' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-300'}">观战幽灵频道 (${s.ghostMessages.length})</button>
+            </div>
+          ` : ''}
+
+          ${(!isGhost || state.activeTab === 'public') ? `
+            <div class="space-y-2.5">
+              ${s.speeches.length === 0 ? `<div class="text-center text-xs text-slate-500 py-6">等待 ${speaker ? `${speaker.seat}号 ${speaker.nickname}` : ''} 开始描述...</div>` : ''}
+              ${s.speeches.map(sp => `
+                <div class="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60">
+                  <div class="flex items-center justify-between text-xs mb-1">
+                    <span class="font-semibold text-slate-200">${sp.avatar || ''} ${sp.seat}号 ${sp.nickname}</span>
+                    <span class="text-slate-500">第${sp.round}轮${sp.subRound === 'PK' ? '·PK' : ''}</span>
+                  </div>
+                  <div class="text-sm ${sp.isTimeout ? 'text-slate-500 italic' : 'text-slate-100'}">${sp.content}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : `
+            <div class="space-y-2">
+              <div class="text-xs text-indigo-300 bg-indigo-500/10 p-2.5 rounded-xl">你已出局，当前为上帝视角：平民词「${s.wordReveal ? s.wordReveal.civilianWord : ''}」/ 卧底词「${s.wordReveal ? s.wordReveal.undercoverWord : ''}」。存活玩家看不到此频道。</div>
+              ${s.ghostMessages.map(gm => `<div class="p-2.5 rounded-xl bg-indigo-950/50 border border-indigo-800/50 text-sm"><span class="text-indigo-300 text-xs font-semibold">${gm.seat}号 ${gm.nickname}：</span>${gm.content}</div>`).join('')}
+            </div>
+          `}
+        </div>
+
+        <!-- Bottom Action Bar -->
+        <div class="p-3 border-t border-slate-800 bg-slate-950/80 safe-bottom">
+          ${s.phase === 'SETTLEMENT' ? (
+            s.hostId === s.myId
+              ? `<button id="btn-reset" class="w-full py-3 rounded-xl bg-teal-500 text-slate-950 font-bold text-sm">返回大厅 · 再来一局</button>`
+              : `<div class="text-center text-xs text-slate-400 py-2">等待房主开启下一局...</div>`
+          ) : isGhost && state.activeTab === 'ghost' ? `
+            <div class="flex gap-2">
+              <input id="inp-ghost" type="text" maxlength="100" placeholder="在观战频道悄悄吐槽..." class="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 border border-indigo-700/70 text-sm text-white focus:outline-none" />
+              <button id="btn-ghost-send" class="px-4 py-2.5 rounded-xl bg-indigo-500 text-white text-sm font-semibold">发送</button>
+            </div>
+          ` : isMyTurn ? `
+            <div class="flex gap-2">
+              <button id="btn-voice-v2" title="V2 预留按住说话语音条" class="px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 text-xs shrink-0">语音(V2)</button>
+              <input id="inp-speech" type="text" maxlength="80" placeholder="轮到你了！用一句话描述（禁提原词）" class="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 border border-teal-500 text-sm text-white focus:outline-none" />
+              <button id="btn-speak" class="px-4 py-2.5 rounded-xl bg-teal-500 text-slate-950 text-sm font-bold shrink-0">发言</button>
+            </div>
+          ` : `
+            <div class="text-center text-xs text-slate-400 py-2">
+              ${s.phase === 'VOTING' ? '投票阶段，请点击上方存活玩家进行暗投' : (speaker ? `当前由 ${speaker.seat}号 ${speaker.nickname} 发言中...` : '等待阶段流转...')}
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    function render() {
+      const app = document.getElementById('app');
+      if (!state.snapshot) {
+        app.innerHTML = renderHome();
+        app.querySelectorAll('[data-avatar]').forEach(btn => {
+          btn.addEventListener('click', () => { state.selectedAvatar = btn.dataset.avatar; render(); });
+        });
+        const nickEl = document.getElementById('inp-nick');
+        const codeEl = document.getElementById('inp-code');
+        nickEl.addEventListener('input', e => { state.nickname = e.target.value; });
+        codeEl.addEventListener('input', e => { state.joinCodeInput = e.target.value; });
+        document.getElementById('btn-create').addEventListener('click', () => {
+          send({ type: 'room:create', nickname: state.nickname, avatar: state.selectedAvatar });
+        });
+        document.getElementById('btn-join').addEventListener('click', () => {
+          if (!state.joinCodeInput.trim()) return showToast('请输入房间号');
+          send({ type: 'room:join', roomCode: state.joinCodeInput.trim(), nickname: state.nickname, avatar: state.selectedAvatar });
+        });
+        return;
+      }
+
+      const s = state.snapshot;
+      if (s.phase === 'LOBBY') {
+        app.innerHTML = renderLobby(s);
+        document.getElementById('btn-leave').addEventListener('click', () => send({ type: 'room:leave' }));
+        app.querySelectorAll('[data-kick]').forEach(b => {
+          b.addEventListener('click', () => send({ type: 'room:kick', targetPlayerId: b.dataset.kick }));
+        });
+        app.querySelectorAll('[data-cfg-spy]').forEach(b => {
+          b.addEventListener('click', () => send({ type: 'room:config', config: { spyCount: Number(b.dataset.cfgSpy) } }));
+        });
+        const blankBtn = document.getElementById('btn-cfg-blank');
+        if (blankBtn) blankBtn.addEventListener('click', () => send({ type: 'room:config', config: { blankCount: s.config.blankCount === 1 ? 0 : 1 } }));
+        const catSel = document.getElementById('sel-cat');
+        if (catSel) catSel.addEventListener('change', e => send({ type: 'room:config', config: { category: e.target.value } }));
+        const startBtn = document.getElementById('btn-start');
+        if (startBtn) {
+          const offlineCount = s.players.filter(p => !p.online).length;
+          if (offlineCount > 0) {
+            startBtn.disabled = true;
+            startBtn.className = 'w-full py-3.5 rounded-xl font-bold text-sm bg-slate-800 text-slate-500';
+            startBtn.textContent = `还有 ${offlineCount} 人离线，无法开始`;
+          }
+          startBtn.addEventListener('click', () => send({ type: 'game:start' }));
+        }
+        const readyBtn = document.getElementById('btn-ready');
+        if (readyBtn) readyBtn.addEventListener('click', () => send({ type: 'player:ready' }));
+      } else {
+        app.innerHTML = renderGame(s);
+        document.getElementById('btn-toggle-word').addEventListener('click', () => { state.wordHidden = !state.wordHidden; render(); });
+        app.querySelectorAll('[data-vote]').forEach(b => {
+          b.addEventListener('click', () => send({ type: 'vote:cast', targetPlayerId: b.dataset.vote }));
+        });
+        app.querySelectorAll('[data-tab]').forEach(b => {
+          b.addEventListener('click', () => { state.activeTab = b.dataset.tab; render(); });
+        });
+        const speakBtn = document.getElementById('btn-speak');
+        const speakInp = document.getElementById('inp-speech');
+        if (speakBtn && speakInp) {
+          const doSpeak = () => send({ type: 'turn:speak', speechType: 'text', content: speakInp.value });
+          speakBtn.addEventListener('click', doSpeak);
+          speakInp.addEventListener('keydown', e => { if (e.key === 'Enter') doSpeak(); });
+        }
+        const voiceBtn = document.getElementById('btn-voice-v2');
+        if (voiceBtn) voiceBtn.addEventListener('click', () => showToast('V2 将支持按住说话语音条，当前 V1 请使用文字发言', true));
+        const ghostBtn = document.getElementById('btn-ghost-send');
+        const ghostInp = document.getElementById('inp-ghost');
+        if (ghostBtn && ghostInp) {
+          const doGhost = () => { send({ type: 'ghost:chat', content: ghostInp.value }); ghostInp.value = ''; };
+          ghostBtn.addEventListener('click', doGhost);
+          ghostInp.addEventListener('keydown', e => { if (e.key === 'Enter') doGhost(); });
+        }
+        const resetBtn = document.getElementById('btn-reset');
+        if (resetBtn) resetBtn.addEventListener('click', () => send({ type: 'game:reset' }));
+      }
+    }
+
+    render();
+    connectWs();
+  </script>
+</body>
+</html>
