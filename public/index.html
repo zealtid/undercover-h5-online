@@ -748,7 +748,10 @@
           b.addEventListener('click', () => { sfx.click(); send({ type: 'room:kick', targetPlayerId: b.dataset.kick }); });
         });
         app.querySelectorAll('[data-cfg-spy]').forEach(b => {
-          b.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { spyCount: Number(b.dataset.cfgSpy) } })); });
+          b.addEventListener('click', () => {
+            sfx.click();
+            send({ type: 'room:config', config: { spyCount: Number(b.dataset.cfgSpy) } });
+          });
         });
         const blankBtn = document.getElementById('btn-cfg-blank');
         if (blankBtn) blankBtn.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { blankCount: s.config.blankCount === 1 ? 0 : 1 } }); });
