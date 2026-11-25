@@ -1466,6 +1466,1182 @@
       "b": "机场线地铁",
       "category": "旅行出行",
       "difficulty": 1
+    },
+    {
+      "category": "日常美食",
+      "a": "馒头",
+      "b": "花卷",
+      "difficulty": 1,
+      "id": "food_26"
+    },
+    {
+      "category": "日常美食",
+      "a": "小笼包",
+      "b": "生煎包",
+      "difficulty": 1,
+      "id": "food_27"
+    },
+    {
+      "category": "日常美食",
+      "a": "煎饼果子",
+      "b": "手抓饼",
+      "difficulty": 1,
+      "id": "food_28"
+    },
+    {
+      "category": "日常美食",
+      "a": "凉皮",
+      "b": "凉面",
+      "difficulty": 2,
+      "id": "food_29"
+    },
+    {
+      "category": "日常美食",
+      "a": "炒饭",
+      "b": "炒面",
+      "difficulty": 1,
+      "id": "food_30"
+    },
+    {
+      "category": "日常美食",
+      "a": "汤面",
+      "b": "拌面",
+      "difficulty": 1,
+      "id": "food_31"
+    },
+    {
+      "category": "日常美食",
+      "a": "热干面",
+      "b": "担担面",
+      "difficulty": 2,
+      "id": "food_32"
+    },
+    {
+      "category": "日常美食",
+      "a": "葱油面",
+      "b": "炸酱面",
+      "difficulty": 1,
+      "id": "food_33"
+    },
+    {
+      "category": "日常美食",
+      "a": "豆沙包",
+      "b": "奶黄包",
+      "difficulty": 1,
+      "id": "food_34"
+    },
+    {
+      "category": "日常美食",
+      "a": "月饼",
+      "b": "蛋黄酥",
+      "difficulty": 2,
+      "id": "food_35"
+    },
+    {
+      "category": "日常美食",
+      "a": "蛋挞",
+      "b": "泡芙",
+      "difficulty": 1,
+      "id": "food_36"
+    },
+    {
+      "category": "日常美食",
+      "a": "炸鸡",
+      "b": "烤鸡",
+      "difficulty": 1,
+      "id": "food_37"
+    },
+    {
+      "category": "日常美食",
+      "a": "牛排",
+      "b": "猪排",
+      "difficulty": 1,
+      "id": "food_38"
+    },
+    {
+      "category": "日常美食",
+      "a": "意面",
+      "b": "通心粉",
+      "difficulty": 2,
+      "id": "food_39"
+    },
+    {
+      "category": "日常美食",
+      "a": "白粥",
+      "b": "小米粥",
+      "difficulty": 1,
+      "id": "food_40"
+    },
+    {
+      "category": "日常美食",
+      "a": "咸鸭蛋",
+      "b": "皮蛋",
+      "difficulty": 1,
+      "id": "food_41"
+    },
+    {
+      "category": "日常美食",
+      "a": "瓜子",
+      "b": "花生",
+      "difficulty": 1,
+      "id": "food_42"
+    },
+    {
+      "category": "日常美食",
+      "a": "酸梅汤",
+      "b": "柠檬茶",
+      "difficulty": 1,
+      "id": "food_43"
+    },
+    {
+      "category": "日常美食",
+      "a": "绿豆汤",
+      "b": "红豆汤",
+      "difficulty": 1,
+      "id": "food_44"
+    },
+    {
+      "category": "日常美食",
+      "a": "糖葫芦",
+      "b": "棉花糖",
+      "difficulty": 1,
+      "id": "food_45"
+    },
+    {
+      "category": "日常美食",
+      "a": "麻婆豆腐",
+      "b": "鱼香肉丝",
+      "difficulty": 2,
+      "id": "food_46"
+    },
+    {
+      "category": "日常美食",
+      "a": "糖醋排骨",
+      "b": "红烧排骨",
+      "difficulty": 2,
+      "id": "food_47"
+    },
+    {
+      "category": "日常美食",
+      "a": "肠粉",
+      "b": "河粉",
+      "difficulty": 2,
+      "id": "food_48"
+    },
+    {
+      "category": "日常美食",
+      "a": "沙拉",
+      "b": "凉拌菜",
+      "difficulty": 2,
+      "id": "food_49"
+    },
+    {
+      "category": "生活物品",
+      "a": "洗衣机",
+      "b": "烘干机",
+      "difficulty": 1,
+      "id": "life_26"
+    },
+    {
+      "category": "生活物品",
+      "a": "冰箱",
+      "b": "冰柜",
+      "difficulty": 1,
+      "id": "life_27"
+    },
+    {
+      "category": "生活物品",
+      "a": "电饭煲",
+      "b": "电高压锅",
+      "difficulty": 2,
+      "id": "life_28"
+    },
+    {
+      "category": "生活物品",
+      "a": "洗碗机",
+      "b": "消毒柜",
+      "difficulty": 2,
+      "id": "life_29"
+    },
+    {
+      "category": "生活物品",
+      "a": "加湿器",
+      "b": "除湿机",
+      "difficulty": 2,
+      "id": "life_30"
+    },
+    {
+      "category": "生活物品",
+      "a": "电热毯",
+      "b": "暖宝宝",
+      "difficulty": 1,
+      "id": "life_31"
+    },
+    {
+      "category": "生活物品",
+      "a": "浴缸",
+      "b": "淋浴房",
+      "difficulty": 1,
+      "id": "life_32"
+    },
+    {
+      "category": "生活物品",
+      "a": "窗帘",
+      "b": "百叶窗",
+      "difficulty": 1,
+      "id": "life_33"
+    },
+    {
+      "category": "生活物品",
+      "a": "地毯",
+      "b": "地垫",
+      "difficulty": 2,
+      "id": "life_34"
+    },
+    {
+      "category": "生活物品",
+      "a": "衣架",
+      "b": "挂钩",
+      "difficulty": 1,
+      "id": "life_35"
+    },
+    {
+      "category": "生活物品",
+      "a": "垃圾袋",
+      "b": "保鲜袋",
+      "difficulty": 1,
+      "id": "life_36"
+    },
+    {
+      "category": "生活物品",
+      "a": "保鲜膜",
+      "b": "铝箔纸",
+      "difficulty": 1,
+      "id": "life_37"
+    },
+    {
+      "category": "生活物品",
+      "a": "洗衣液",
+      "b": "洗衣粉",
+      "difficulty": 1,
+      "id": "life_38"
+    },
+    {
+      "category": "生活物品",
+      "a": "毛巾",
+      "b": "浴巾",
+      "difficulty": 1,
+      "id": "life_39"
+    },
+    {
+      "category": "生活物品",
+      "a": "被子",
+      "b": "毯子",
+      "difficulty": 1,
+      "id": "life_40"
+    },
+    {
+      "category": "生活物品",
+      "a": "闹钟",
+      "b": "座钟",
+      "difficulty": 2,
+      "id": "life_41"
+    },
+    {
+      "category": "生活物品",
+      "a": "梳子",
+      "b": "发夹",
+      "difficulty": 1,
+      "id": "life_42"
+    },
+    {
+      "category": "生活物品",
+      "a": "创可贴",
+      "b": "纱布",
+      "difficulty": 1,
+      "id": "life_43"
+    },
+    {
+      "category": "生活物品",
+      "a": "钥匙",
+      "b": "门卡",
+      "difficulty": 1,
+      "id": "life_44"
+    },
+    {
+      "category": "生活物品",
+      "a": "钱包",
+      "b": "卡包",
+      "difficulty": 1,
+      "id": "life_45"
+    },
+    {
+      "category": "生活物品",
+      "a": "围巾",
+      "b": "帽子",
+      "difficulty": 1,
+      "id": "life_46"
+    },
+    {
+      "category": "生活物品",
+      "a": "牛仔裤",
+      "b": "休闲裤",
+      "difficulty": 1,
+      "id": "life_47"
+    },
+    {
+      "category": "生活物品",
+      "a": "羽绒服",
+      "b": "棉服",
+      "difficulty": 2,
+      "id": "life_48"
+    },
+    {
+      "category": "生活物品",
+      "a": "熨斗",
+      "b": "挂烫机",
+      "difficulty": 2,
+      "id": "life_49"
+    },
+    {
+      "category": "影视动漫",
+      "a": "西游记",
+      "b": "封神演义",
+      "difficulty": 1,
+      "id": "ent_26"
+    },
+    {
+      "category": "影视动漫",
+      "a": "红楼梦",
+      "b": "聊斋志异",
+      "difficulty": 2,
+      "id": "ent_27"
+    },
+    {
+      "category": "影视动漫",
+      "a": "白蛇传",
+      "b": "梁山伯与祝英台",
+      "difficulty": 1,
+      "id": "ent_28"
+    },
+    {
+      "category": "影视动漫",
+      "a": "葫芦娃",
+      "b": "黑猫警长",
+      "difficulty": 1,
+      "id": "ent_29"
+    },
+    {
+      "category": "影视动漫",
+      "a": "大头儿子小头爸爸",
+      "b": "小猪佩奇",
+      "difficulty": 1,
+      "id": "ent_30"
+    },
+    {
+      "category": "影视动漫",
+      "a": "龙珠",
+      "b": "圣斗士星矢",
+      "difficulty": 1,
+      "id": "ent_31"
+    },
+    {
+      "category": "影视动漫",
+      "a": "灌篮高手",
+      "b": "排球少年",
+      "difficulty": 1,
+      "id": "ent_32"
+    },
+    {
+      "category": "影视动漫",
+      "a": "千与千寻",
+      "b": "龙猫",
+      "difficulty": 1,
+      "id": "ent_33"
+    },
+    {
+      "category": "影视动漫",
+      "a": "你的名字",
+      "b": "天气之子",
+      "difficulty": 2,
+      "id": "ent_34"
+    },
+    {
+      "category": "影视动漫",
+      "a": "复仇者联盟",
+      "b": "正义联盟",
+      "difficulty": 1,
+      "id": "ent_35"
+    },
+    {
+      "category": "影视动漫",
+      "a": "星球大战",
+      "b": "星际迷航",
+      "difficulty": 2,
+      "id": "ent_36"
+    },
+    {
+      "category": "影视动漫",
+      "a": "速度与激情",
+      "b": "碟中谍",
+      "difficulty": 1,
+      "id": "ent_37"
+    },
+    {
+      "category": "影视动漫",
+      "a": "功夫",
+      "b": "叶问",
+      "difficulty": 2,
+      "id": "ent_38"
+    },
+    {
+      "category": "影视动漫",
+      "a": "肖申克的救赎",
+      "b": "楚门的世界",
+      "difficulty": 2,
+      "id": "ent_39"
+    },
+    {
+      "category": "影视动漫",
+      "a": "宫崎骏",
+      "b": "新海诚",
+      "difficulty": 2,
+      "id": "ent_40"
+    },
+    {
+      "category": "影视动漫",
+      "a": "春晚",
+      "b": "元宵晚会",
+      "difficulty": 1,
+      "id": "ent_41"
+    },
+    {
+      "category": "影视动漫",
+      "a": "纪录片",
+      "b": "专题片",
+      "difficulty": 2,
+      "id": "ent_42"
+    },
+    {
+      "category": "影视动漫",
+      "a": "综艺节目",
+      "b": "真人秀",
+      "difficulty": 2,
+      "id": "ent_43"
+    },
+    {
+      "category": "影视动漫",
+      "a": "电视连续剧",
+      "b": "网络剧",
+      "difficulty": 1,
+      "id": "ent_44"
+    },
+    {
+      "category": "影视动漫",
+      "a": "原神",
+      "b": "崩坏星穹铁道",
+      "difficulty": 2,
+      "id": "ent_45"
+    },
+    {
+      "category": "影视动漫",
+      "a": "和平精英",
+      "b": "绝地求生",
+      "difficulty": 2,
+      "id": "ent_46"
+    },
+    {
+      "category": "影视动漫",
+      "a": "我的世界",
+      "b": "迷你世界",
+      "difficulty": 2,
+      "id": "ent_47"
+    },
+    {
+      "category": "影视动漫",
+      "a": "超级马里奥",
+      "b": "索尼克",
+      "difficulty": 1,
+      "id": "ent_48"
+    },
+    {
+      "category": "影视动漫",
+      "a": "冰雪奇缘",
+      "b": "寻梦环游记",
+      "difficulty": 1,
+      "id": "ent_49"
+    },
+    {
+      "category": "职场休闲",
+      "a": "面试",
+      "b": "笔试",
+      "difficulty": 1,
+      "id": "work_26"
+    },
+    {
+      "category": "职场休闲",
+      "a": "跳槽",
+      "b": "转岗",
+      "difficulty": 2,
+      "id": "work_27"
+    },
+    {
+      "category": "职场休闲",
+      "a": "内推",
+      "b": "招聘会",
+      "difficulty": 1,
+      "id": "work_28"
+    },
+    {
+      "category": "职场休闲",
+      "a": "病假",
+      "b": "事假",
+      "difficulty": 1,
+      "id": "work_29"
+    },
+    {
+      "category": "职场休闲",
+      "a": "展览",
+      "b": "博物馆",
+      "difficulty": 1,
+      "id": "work_30"
+    },
+    {
+      "category": "职场休闲",
+      "a": "桌游",
+      "b": "卡牌",
+      "difficulty": 1,
+      "id": "work_31"
+    },
+    {
+      "category": "职场休闲",
+      "a": "足球",
+      "b": "篮球",
+      "difficulty": 1,
+      "id": "work_32"
+    },
+    {
+      "category": "职场休闲",
+      "a": "羽毛球",
+      "b": "乒乓球",
+      "difficulty": 1,
+      "id": "work_33"
+    },
+    {
+      "category": "职场休闲",
+      "a": "跑步",
+      "b": "快走",
+      "difficulty": 1,
+      "id": "work_34"
+    },
+    {
+      "category": "职场休闲",
+      "a": "淘宝",
+      "b": "京东",
+      "difficulty": 1,
+      "id": "work_35"
+    },
+    {
+      "category": "职场休闲",
+      "a": "闲鱼",
+      "b": "转转",
+      "difficulty": 2,
+      "id": "work_36"
+    },
+    {
+      "category": "职场休闲",
+      "a": "支付宝",
+      "b": "微信支付",
+      "difficulty": 1,
+      "id": "work_37"
+    },
+    {
+      "category": "职场休闲",
+      "a": "信用卡",
+      "b": "储蓄卡",
+      "difficulty": 1,
+      "id": "work_38"
+    },
+    {
+      "category": "职场休闲",
+      "a": "花呗",
+      "b": "白条",
+      "difficulty": 2,
+      "id": "work_39"
+    },
+    {
+      "category": "职场休闲",
+      "a": "团购",
+      "b": "优惠券",
+      "difficulty": 1,
+      "id": "work_40"
+    },
+    {
+      "category": "职场休闲",
+      "a": "会员卡",
+      "b": "积分卡",
+      "difficulty": 2,
+      "id": "work_41"
+    },
+    {
+      "category": "职场休闲",
+      "a": "跑步机",
+      "b": "动感单车",
+      "difficulty": 1,
+      "id": "work_42"
+    },
+    {
+      "category": "职场休闲",
+      "a": "公园",
+      "b": "广场",
+      "difficulty": 1,
+      "id": "work_43"
+    },
+    {
+      "category": "职场休闲",
+      "a": "年会",
+      "b": "晚宴",
+      "difficulty": 1,
+      "id": "work_44"
+    },
+    {
+      "category": "职场休闲",
+      "a": "同事聚会",
+      "b": "同学聚会",
+      "difficulty": 1,
+      "id": "work_45"
+    },
+    {
+      "category": "职场休闲",
+      "a": "猎头",
+      "b": "招聘网站",
+      "difficulty": 2,
+      "id": "work_46"
+    },
+    {
+      "category": "职场休闲",
+      "a": "读书会",
+      "b": "分享会",
+      "difficulty": 2,
+      "id": "work_47"
+    },
+    {
+      "category": "职场休闲",
+      "a": "加班餐",
+      "b": "下午茶",
+      "difficulty": 1,
+      "id": "work_48"
+    },
+    {
+      "category": "职场休闲",
+      "a": "电影票",
+      "b": "演出票",
+      "difficulty": 1,
+      "id": "work_49"
+    },
+    {
+      "category": "上班生活",
+      "a": "考勤机",
+      "b": "打卡柱",
+      "difficulty": 2,
+      "id": "office_37"
+    },
+    {
+      "category": "上班生活",
+      "a": "工位灯",
+      "b": "屏幕挂灯",
+      "difficulty": 2,
+      "id": "office_38"
+    },
+    {
+      "category": "上班生活",
+      "a": "电脑支架",
+      "b": "笔记本底座",
+      "difficulty": 2,
+      "id": "office_39"
+    },
+    {
+      "category": "上班生活",
+      "a": "共享文档",
+      "b": "在线表格",
+      "difficulty": 1,
+      "id": "office_40"
+    },
+    {
+      "category": "上班生活",
+      "a": "请假单",
+      "b": "出差申请",
+      "difficulty": 1,
+      "id": "office_41"
+    },
+    {
+      "category": "上班生活",
+      "a": "用章申请",
+      "b": "合同审批",
+      "difficulty": 2,
+      "id": "office_42"
+    },
+    {
+      "category": "上班生活",
+      "a": "人事",
+      "b": "行政",
+      "difficulty": 2,
+      "id": "office_43"
+    },
+    {
+      "category": "上班生活",
+      "a": "财务",
+      "b": "出纳",
+      "difficulty": 2,
+      "id": "office_44"
+    },
+    {
+      "category": "上班生活",
+      "a": "法务",
+      "b": "合规",
+      "difficulty": 2,
+      "id": "office_45"
+    },
+    {
+      "category": "上班生活",
+      "a": "运维",
+      "b": "网管",
+      "difficulty": 1,
+      "id": "office_46"
+    },
+    {
+      "category": "上班生活",
+      "a": "客服",
+      "b": "售后",
+      "difficulty": 1,
+      "id": "office_47"
+    },
+    {
+      "category": "上班生活",
+      "a": "销售",
+      "b": "商务",
+      "difficulty": 2,
+      "id": "office_48"
+    },
+    {
+      "category": "上班生活",
+      "a": "研发",
+      "b": "测试",
+      "difficulty": 1,
+      "id": "office_49"
+    },
+    {
+      "category": "上班生活",
+      "a": "早会",
+      "b": "夕会",
+      "difficulty": 1,
+      "id": "office_50"
+    },
+    {
+      "category": "上班生活",
+      "a": "头脑风暴",
+      "b": "工作坊",
+      "difficulty": 2,
+      "id": "office_51"
+    },
+    {
+      "category": "上班生活",
+      "a": "培训讲座",
+      "b": "内部分享",
+      "difficulty": 1,
+      "id": "office_52"
+    },
+    {
+      "category": "上班生活",
+      "a": "工服",
+      "b": "商务正装",
+      "difficulty": 1,
+      "id": "office_53"
+    },
+    {
+      "category": "上班生活",
+      "a": "员工宿舍",
+      "b": "倒班房",
+      "difficulty": 2,
+      "id": "office_54"
+    },
+    {
+      "category": "上班生活",
+      "a": "班车",
+      "b": "通勤车",
+      "difficulty": 2,
+      "id": "office_55"
+    },
+    {
+      "category": "上班生活",
+      "a": "地下车库",
+      "b": "地面车位",
+      "difficulty": 1,
+      "id": "office_56"
+    },
+    {
+      "category": "上班生活",
+      "a": "访客登记",
+      "b": "临时通行证",
+      "difficulty": 1,
+      "id": "office_57"
+    },
+    {
+      "category": "上班生活",
+      "a": "消防演习",
+      "b": "应急演练",
+      "difficulty": 2,
+      "id": "office_58"
+    },
+    {
+      "category": "上班生活",
+      "a": "保密协议",
+      "b": "竞业协议",
+      "difficulty": 2,
+      "id": "office_59"
+    },
+    {
+      "category": "上班生活",
+      "a": "饮水机",
+      "b": "咖啡机",
+      "difficulty": 1,
+      "id": "office_60"
+    },
+    {
+      "category": "网络生活",
+      "a": "转发",
+      "b": "分享",
+      "difficulty": 2,
+      "id": "net_37"
+    },
+    {
+      "category": "网络生活",
+      "a": "投稿",
+      "b": "上传",
+      "difficulty": 1,
+      "id": "net_38"
+    },
+    {
+      "category": "网络生活",
+      "a": "刷脸支付",
+      "b": "指纹解锁",
+      "difficulty": 1,
+      "id": "net_39"
+    },
+    {
+      "category": "网络生活",
+      "a": "面容识别",
+      "b": "指纹识别",
+      "difficulty": 2,
+      "id": "net_40"
+    },
+    {
+      "category": "网络生活",
+      "a": "省电模式",
+      "b": "高性能模式",
+      "difficulty": 1,
+      "id": "net_41"
+    },
+    {
+      "category": "网络生活",
+      "a": "清理后台",
+      "b": "强制停止",
+      "difficulty": 2,
+      "id": "net_42"
+    },
+    {
+      "category": "网络生活",
+      "a": "应用更新",
+      "b": "系统更新",
+      "difficulty": 1,
+      "id": "net_43"
+    },
+    {
+      "category": "网络生活",
+      "a": "无痕浏览",
+      "b": "访客模式",
+      "difficulty": 2,
+      "id": "net_44"
+    },
+    {
+      "category": "网络生活",
+      "a": "短信验证",
+      "b": "邮箱验证",
+      "difficulty": 1,
+      "id": "net_45"
+    },
+    {
+      "category": "网络生活",
+      "a": "绑定手机",
+      "b": "绑定邮箱",
+      "difficulty": 1,
+      "id": "net_46"
+    },
+    {
+      "category": "网络生活",
+      "a": "实名认证",
+      "b": "学生认证",
+      "difficulty": 2,
+      "id": "net_47"
+    },
+    {
+      "category": "网络生活",
+      "a": "月卡",
+      "b": "季卡",
+      "difficulty": 1,
+      "id": "net_48"
+    },
+    {
+      "category": "网络生活",
+      "a": "自动续费",
+      "b": "连续包月",
+      "difficulty": 2,
+      "id": "net_49"
+    },
+    {
+      "category": "网络生活",
+      "a": "拉黑",
+      "b": "举报",
+      "difficulty": 1,
+      "id": "net_50"
+    },
+    {
+      "category": "网络生活",
+      "a": "仅自己可见",
+      "b": "仅好友可见",
+      "difficulty": 2,
+      "id": "net_51"
+    },
+    {
+      "category": "网络生活",
+      "a": "定位权限",
+      "b": "相册权限",
+      "difficulty": 1,
+      "id": "net_52"
+    },
+    {
+      "category": "网络生活",
+      "a": "推送通知",
+      "b": "邮件提醒",
+      "difficulty": 1,
+      "id": "net_53"
+    },
+    {
+      "category": "网络生活",
+      "a": "红点提示",
+      "b": "角标数字",
+      "difficulty": 2,
+      "id": "net_54"
+    },
+    {
+      "category": "网络生活",
+      "a": "下拉刷新",
+      "b": "上拉加载",
+      "difficulty": 1,
+      "id": "net_55"
+    },
+    {
+      "category": "网络生活",
+      "a": "历史记录",
+      "b": "观看记录",
+      "difficulty": 2,
+      "id": "net_56"
+    },
+    {
+      "category": "网络生活",
+      "a": "稍后再看",
+      "b": "播放列表",
+      "difficulty": 2,
+      "id": "net_57"
+    },
+    {
+      "category": "网络生活",
+      "a": "倍速播放",
+      "b": "跳过片头",
+      "difficulty": 1,
+      "id": "net_58"
+    },
+    {
+      "category": "网络生活",
+      "a": "清晰度",
+      "b": "流畅度",
+      "difficulty": 2,
+      "id": "net_59"
+    },
+    {
+      "category": "网络生活",
+      "a": "一键三连",
+      "b": "转发抽奖",
+      "difficulty": 2,
+      "id": "net_60"
+    },
+    {
+      "category": "旅行出行",
+      "a": "签证",
+      "b": "入境卡",
+      "difficulty": 2,
+      "id": "travel_37"
+    },
+    {
+      "category": "旅行出行",
+      "a": "登机箱",
+      "b": "托运箱",
+      "difficulty": 2,
+      "id": "travel_38"
+    },
+    {
+      "category": "旅行出行",
+      "a": "腰包",
+      "b": "斜挎包",
+      "difficulty": 1,
+      "id": "travel_39"
+    },
+    {
+      "category": "旅行出行",
+      "a": "里程卡",
+      "b": "航司会员",
+      "difficulty": 2,
+      "id": "travel_40"
+    },
+    {
+      "category": "旅行出行",
+      "a": "值机柜台",
+      "b": "行李托运处",
+      "difficulty": 1,
+      "id": "travel_41"
+    },
+    {
+      "category": "旅行出行",
+      "a": "安检篮",
+      "b": "安检托盘",
+      "difficulty": 2,
+      "id": "travel_42"
+    },
+    {
+      "category": "旅行出行",
+      "a": "登机桥",
+      "b": "摆渡车",
+      "difficulty": 1,
+      "id": "travel_43"
+    },
+    {
+      "category": "旅行出行",
+      "a": "飞机餐",
+      "b": "火车餐",
+      "difficulty": 1,
+      "id": "travel_44"
+    },
+    {
+      "category": "旅行出行",
+      "a": "出租车",
+      "b": "网约车",
+      "difficulty": 1,
+      "id": "travel_45"
+    },
+    {
+      "category": "旅行出行",
+      "a": "地铁",
+      "b": "轻轨",
+      "difficulty": 1,
+      "id": "travel_46"
+    },
+    {
+      "category": "旅行出行",
+      "a": "公交车",
+      "b": "长途大巴",
+      "difficulty": 1,
+      "id": "travel_47"
+    },
+    {
+      "category": "旅行出行",
+      "a": "高铁",
+      "b": "动车",
+      "difficulty": 2,
+      "id": "travel_48"
+    },
+    {
+      "category": "旅行出行",
+      "a": "硬座",
+      "b": "卧铺",
+      "difficulty": 1,
+      "id": "travel_49"
+    },
+    {
+      "category": "旅行出行",
+      "a": "退票",
+      "b": "改签",
+      "difficulty": 1,
+      "id": "travel_50"
+    },
+    {
+      "category": "旅行出行",
+      "a": "换乘",
+      "b": "直达",
+      "difficulty": 1,
+      "id": "travel_51"
+    },
+    {
+      "category": "旅行出行",
+      "a": "加油站",
+      "b": "充电桩",
+      "difficulty": 1,
+      "id": "travel_52"
+    },
+    {
+      "category": "旅行出行",
+      "a": "驾照",
+      "b": "行驶证",
+      "difficulty": 2,
+      "id": "travel_53"
+    },
+    {
+      "category": "旅行出行",
+      "a": "红绿灯",
+      "b": "斑马线",
+      "difficulty": 1,
+      "id": "travel_54"
+    },
+    {
+      "category": "旅行出行",
+      "a": "高速公路",
+      "b": "国道",
+      "difficulty": 1,
+      "id": "travel_55"
+    },
+    {
+      "category": "旅行出行",
+      "a": "隧道",
+      "b": "桥梁",
+      "difficulty": 1,
+      "id": "travel_56"
+    },
+    {
+      "category": "旅行出行",
+      "a": "预约码",
+      "b": "入园二维码",
+      "difficulty": 2,
+      "id": "travel_57"
+    },
+    {
+      "category": "旅行出行",
+      "a": "索道",
+      "b": "步道",
+      "difficulty": 1,
+      "id": "travel_58"
+    },
+    {
+      "category": "旅行出行",
+      "a": "古镇",
+      "b": "老街",
+      "difficulty": 2,
+      "id": "travel_59"
+    },
+    {
+      "category": "旅行出行",
+      "a": "海滨",
+      "b": "湖景",
+      "difficulty": 1,
+      "id": "travel_60"
     }
   ]
 }

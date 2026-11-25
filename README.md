@@ -63,8 +63,8 @@ node server.js
 
 - `server.js`：零依赖静态文件服务 + 原生 WebSocket 网关 + 房间管理与僵尸房清理
 - `engine/fsm.js`：权威游戏状态机（3–10 人配置校验、1–2 卧底、3 人双轮特殊规则、视角裁剪防作弊、禁字拦截、平票 PK、幽灵观战频道、断线重连）
-- `engine/wordBank.js`：从 `data/words.json` 加载并严格校验词库（默认 208 组，7 个分类）
-- `data/words.json`：外置词库数据文件（原 100 组 + 上班生活/网络生活/旅行出行各 36 组）
+- `engine/wordBank.js`：从 `data/words.json` 加载并严格校验词库（默认 376 组，7 个真实分类 + 虚拟「全部」）
+- `data/words.json`：外置词库数据文件（376 组：日常美食/生活物品/影视动漫/职场休闲各 49 组，上班生活/网络生活/旅行出行各 60 组）
 - `public/index.html`：移动端优先 H5 客户端（支持断线自动重连与时钟校准）
 - `tests/fsm.test.js`：自动化规则验证脚本
 - `tests/wordBank.test.js`：外置词库加载、校验与抽词验证脚本

@@ -20,11 +20,16 @@ function runTests() {
   delete process.env.WORD_BANK_PATH;
   const { WORD_BANK, CATEGORIES } = freshWordBank();
 
-  // Default file: 208 pairs, original 100 ids, 36 new pairs per added category.
-  assert.strictEqual(WORD_BANK.length, 208);
+  // Default file: 376 pairs, original ids retained, 24 new pairs per category.
+  assert.strictEqual(WORD_BANK.length, 376);
   const ids = new Set(WORD_BANK.map(p => p.id));
   for (const prefix of ['food', 'life', 'ent', 'work']) {
     for (let i = 1; i <= 25; i++) {
+      assert.ok(ids.has(`${prefix}_${String(i).padStart(2, '0')}`), `缺少原词对 id ${prefix}_${i}`);
+    }
+  }
+  for (const prefix of ['office', 'net', 'travel']) {
+    for (let i = 1; i <= 36; i++) {
       assert.ok(ids.has(`${prefix}_${String(i).padStart(2, '0')}`), `缺少原词对 id ${prefix}_${i}`);
     }
   }
@@ -38,13 +43,13 @@ function runTests() {
   for (const pair of WORD_BANK) {
     counts[pair.category] = (counts[pair.category] || 0) + 1;
   }
-  assert.strictEqual(counts['日常美食'], 25);
-  assert.strictEqual(counts['生活物品'], 25);
-  assert.strictEqual(counts['影视动漫'], 25);
-  assert.strictEqual(counts['职场休闲'], 25);
-  assert.strictEqual(counts['上班生活'], 36);
-  assert.strictEqual(counts['网络生活'], 36);
-  assert.strictEqual(counts['旅行出行'], 36);
+  assert.strictEqual(counts['日常美食'], 49);
+  assert.strictEqual(counts['生活物品'], 49);
+  assert.strictEqual(counts['影视动漫'], 49);
+  assert.strictEqual(counts['职场休闲'], 49);
+  assert.strictEqual(counts['上班生活'], 60);
+  assert.strictEqual(counts['网络生活'], 60);
+  assert.strictEqual(counts['旅行出行'], 60);
 
   // No duplicate ids, no identical or swapped word pairs (trim + case insensitive).
   assert.strictEqual(ids.size, WORD_BANK.length, 'id 不可重复');
@@ -103,7 +108,7 @@ function runTests() {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
-  console.log('ALL WORD BANK TESTS PASSED (208 pairs, original ids, categories, dedup, pickWordPair, validation)');
+  console.log('ALL WORD BANK TESTS PASSED (376 pairs, original ids, categories, dedup, pickWordPair, validation)');
 }
 
 try {
