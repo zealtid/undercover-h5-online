@@ -11,6 +11,7 @@ const PHASES = {
   SPEAKING: 'SPEAKING',
   VOTING: 'VOTING',
   TIE_PK: 'TIE_PK',
+  SPY_GUESS: 'SPY_GUESS',
   SETTLEMENT: 'SETTLEMENT'
 };
 
@@ -27,8 +28,17 @@ const DEFAULT_CONFIG = {
   speakTimeoutSec: 45,
   voteTimeoutSec: 30,
   revealRoleOnOut: false, // Default: hide eliminated player's role until settlement
-  preferCivilianFirst: true
+  preferCivilianFirst: true,
+  delayedSpyReveal: true,   // M1：双卧底第 2 轮起互认（仅 spyCount === 2 生效）
+  easterEggMode: false,     // M2：房主开关，开启后按概率触发彩蛋局
+  easterEggRate: 0.08,      // M2：触发概率（建议 0.05 ~ 0.10）
+  allowSpySelfReveal: true, // M3：允许主动发起自爆猜词
+  enableGhostBet: true      // M4：开启观战席上帝押注
 };
+
+function normalizeGuessWord(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, '');
+}
 
 function generateId(prefix = 'p') {
   return `${prefix}_${crypto.randomBytes(4).toString('hex')}`;
@@ -62,6 +72,14 @@ function sanitizeConfig(config, playerCount) {
   }
   next.speakTimeoutSec = Math.max(15, Math.min(120, Number(next.speakTimeoutSec) || 45));
   next.voteTimeoutSec = Math.max(15, Math.min(90, Number(next.voteTimeoutSec) || 30));
+  next.delayedSpyReveal = next.delayedSpyReveal !== false;
+  next.easterEggMode = next.easterEggMode === true;
+  const rate = Number(next.easterEggRate);
+  next.easterEggRate = Number.isFinite(rate) ? Math.max(0.05, Math.min(0.10, rate)) : 0.08;
+  next.allowSpySelfReveal = next.allowSpySelfReveal !== false;
+  next.enableGhostBet = next.enableGhostBet !== false;
+  // Never accept client-supplied test hooks via room:config
+  delete next._forceEasterEggType;
   return next;
 }
 
@@ -118,8 +136,25 @@ class UndercoverRoom {
     // Ghost / Spectator chat (only visible to eliminated players)
     this.ghostMessages = [];  // { id, playerId, seat, nickname, content, ts }
 
+    // M2: Easter egg round type (null | 'ALL_SAME' | 'ALL_DIFFERENT')
+    this.easterEggType = null;
+    this.completedVoteRounds = 0;
+
+    // M3: Self-reveal guess
+    this.guessingPlayerId = null;
+    this.pausedPhase = null;
+    this.selfRevealNotice = null; // { seat, nickname, status, note }
+
+    // M4: Ghost bets
+    // { [playerId]: { finalWinner: 'CIVILIAN'|'UNDERCOVER'|null, byRound: { [round]: targetId }, score: 0 } }
+    this.ghostBets = {};
+    this.bestSpectator = null;
+    this.ghostBetRefundNote = null;
+    // Test-only: set before startGame to force easter egg type (never via client config)
+    this._forceEasterEggType = null;
+
     // Settlement
-    this.winner = null;       // 'CIVILIAN' | 'UNDERCOVER' | null
+    this.winner = null;       // 'CIVILIAN' | 'UNDERCOVER' | 'EASTER_EGG' | null
     this.winReason = '';
     // Word-pair feedback at settlement: playerId -> 'up' | 'down'
     this.wordFeedbacks = {};
@@ -311,6 +346,45 @@ class UndercoverRoom {
     };
   }
 
+  /**
+   * Flatten unique words from the configured category; fall back to full bank if too few.
+   */
+  pickDistinctWords(count) {
+    const flatten = (pool) => {
+      const seen = new Set();
+      const words = [];
+      for (const w of pool) {
+        for (const term of [w.a, w.b]) {
+          const key = term.trim().toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            words.push(term);
+          }
+        }
+      }
+      return words;
+    };
+
+    let pool = WORD_BANK.filter(w =>
+      this.config.category === '全部' ? true : w.category === this.config.category
+    );
+    if (pool.length === 0) pool = WORD_BANK;
+    let words = flatten(pool);
+    if (words.length < count) {
+      words = flatten(WORD_BANK);
+    }
+    return shuffle(words).slice(0, count);
+  }
+
+  buildEasterEggReason(extraNote = '') {
+    const prefix = extraNote ? `${extraNote} ` : '';
+    if (this.easterEggType === 'ALL_SAME') {
+      const word = this.currentWordPair ? this.currentWordPair.civilianWord : '';
+      return `${prefix}哈哈被骗了吧！本局是【全员相同词】彩蛋局，所有人拿的都是『${word}』！`;
+    }
+    return `${prefix}哈哈被骗了吧！本局是【全员不同词】彩蛋局，每人各拿一词！`;
+  }
+
   kickPlayer(actorId, targetId) {
     this.touch();
     if (this.phase !== PHASES.LOBBY) {
@@ -373,24 +447,51 @@ class UndercoverRoom {
     this._dbSettlementOk = false;
     this._dbSettlementPromise = null;
 
-    // Assign roles
-    const n = this.players.length;
-    const roleBag = [];
-    for (let i = 0; i < this.config.spyCount; i++) roleBag.push(ROLES.UNDERCOVER);
-    for (let i = 0; i < this.config.blankCount; i++) roleBag.push(ROLES.BLANK);
-    while (roleBag.length < n) roleBag.push(ROLES.CIVILIAN);
+    // M2: roll easter egg (never announced until settlement)
+    // Tests may set room._forceEasterEggType; never accept it from client config.
+    this.easterEggType = null;
+    if (this.config.easterEggMode) {
+      if (this._forceEasterEggType === 'ALL_SAME' || this._forceEasterEggType === 'ALL_DIFFERENT') {
+        this.easterEggType = this._forceEasterEggType;
+      } else if (Math.random() < this.config.easterEggRate) {
+        this.easterEggType = Math.random() < 0.5 ? 'ALL_SAME' : 'ALL_DIFFERENT';
+      }
+    }
 
-    const shuffledRoles = shuffle(roleBag);
-    this.players.forEach((p, idx) => {
-      p.alive = true;
-      p.role = shuffledRoles[idx];
-      if (p.role === ROLES.CIVILIAN) p.word = this.currentWordPair.civilianWord;
-      else if (p.role === ROLES.UNDERCOVER) p.word = this.currentWordPair.undercoverWord;
-      else p.word = ''; // BLANK (白板)
-    });
+    const n = this.players.length;
+    if (this.easterEggType === 'ALL_SAME') {
+      this.players.forEach((p) => {
+        p.alive = true;
+        p.role = ROLES.CIVILIAN;
+        p.word = this.currentWordPair.civilianWord;
+      });
+    } else if (this.easterEggType === 'ALL_DIFFERENT') {
+      const words = this.pickDistinctWords(n);
+      this.players.forEach((p, idx) => {
+        p.alive = true;
+        p.role = ROLES.UNDERCOVER;
+        p.word = words[idx] || this.currentWordPair.undercoverWord;
+      });
+    } else {
+      // Assign roles normally
+      const roleBag = [];
+      for (let i = 0; i < this.config.spyCount; i++) roleBag.push(ROLES.UNDERCOVER);
+      for (let i = 0; i < this.config.blankCount; i++) roleBag.push(ROLES.BLANK);
+      while (roleBag.length < n) roleBag.push(ROLES.CIVILIAN);
+
+      const shuffledRoles = shuffle(roleBag);
+      this.players.forEach((p, idx) => {
+        p.alive = true;
+        p.role = shuffledRoles[idx];
+        if (p.role === ROLES.CIVILIAN) p.word = this.currentWordPair.civilianWord;
+        else if (p.role === ROLES.UNDERCOVER) p.word = this.currentWordPair.undercoverWord;
+        else p.word = ''; // BLANK (白板)
+      });
+    }
 
     this.roundNumber = 1;
     this.speakingSubRound = 1;
+    this.completedVoteRounds = 0;
     this.speeches = [];
     this.ghostMessages = [];
     this.votes = {};
@@ -400,6 +501,12 @@ class UndercoverRoom {
     this.winner = null;
     this.winReason = '';
     this.wordFeedbacks = {};
+    this.guessingPlayerId = null;
+    this.pausedPhase = null;
+    this.selfRevealNotice = null;
+    this.ghostBets = {};
+    this.bestSpectator = null;
+    this.ghostBetRefundNote = null;
 
     this.beginSpeakingRound(null);
     return { ok: true };
@@ -609,6 +716,12 @@ class UndercoverRoom {
         isTie: true,
         note: '本轮全员弃权，无人出局'
       };
+      this.completedVoteRounds += 1;
+      const eggOutcome = this.checkEasterEggAfterVote();
+      if (eggOutcome) {
+        this.finishGame(eggOutcome.winner, eggOutcome.reason);
+        return;
+      }
       this.advanceToNextRound();
       return;
     }
@@ -621,7 +734,7 @@ class UndercoverRoom {
       this.consecutiveTies++;
       // 3-player final vote tie -> Undercover wins on second consecutive tie
       if (this.consecutiveTies >= 2) {
-        if (this.players.length === 3) {
+        if (this.players.length === 3 && !this.easterEggType) {
           this.lastVoteSummary = {
             round: this.roundNumber,
             tally,
@@ -629,6 +742,7 @@ class UndercoverRoom {
             isTie: true,
             note: '3 人局连续平票，卧底成功逃脱'
           };
+          this.completedVoteRounds += 1;
           this.finishGame('UNDERCOVER', '3 人局连续平票，卧底存活获胜');
           return;
         }
@@ -640,6 +754,12 @@ class UndercoverRoom {
           note: '连续两次平票，本轮平安夜无人出局，进入下一轮'
         };
         this.consecutiveTies = 0;
+        this.completedVoteRounds += 1;
+        const eggOutcome = this.checkEasterEggAfterVote();
+        if (eggOutcome) {
+          this.finishGame(eggOutcome.winner, eggOutcome.reason);
+          return;
+        }
         this.advanceToNextRound();
         return;
       }
@@ -663,6 +783,7 @@ class UndercoverRoom {
     eliminated.alive = false;
     this.consecutiveTies = 0;
     this.pkCandidates = [];
+    this.completedVoteRounds += 1;
 
     this.lastVoteSummary = {
       round: this.roundNumber,
@@ -675,6 +796,8 @@ class UndercoverRoom {
       note: `${eliminated.seat}号 ${eliminated.nickname} 得票最高（${maxVotes} 票）出局`
     };
 
+    this.scoreGhostNextOutBets(eliminatedId);
+
     // Check Win Condition
     const outcome = this.checkWinCondition();
     if (outcome) {
@@ -685,7 +808,24 @@ class UndercoverRoom {
     this.advanceToNextRound();
   }
 
+  checkEasterEggAfterVote() {
+    if (!this.easterEggType) return null;
+    const total = this.players.length;
+    const aliveCount = this.players.filter(p => p.alive).length;
+    const needRounds = total <= 3 ? 1 : 2;
+    const aliveThreshold = Math.max(2, Math.floor(total / 2));
+    if (this.completedVoteRounds >= needRounds || aliveCount <= aliveThreshold) {
+      return { winner: 'EASTER_EGG', reason: this.buildEasterEggReason() };
+    }
+    return null;
+  }
+
   checkWinCondition() {
+    // M2: easter egg uses dedicated end rules (no classic spy wipe)
+    if (this.easterEggType) {
+      return this.checkEasterEggAfterVote();
+    }
+
     const alive = this.players.filter(p => p.alive);
     const aliveSpies = alive.filter(p => p.role === ROLES.UNDERCOVER || p.role === ROLES.BLANK);
     const aliveCivilians = alive.filter(p => p.role === ROLES.CIVILIAN);
@@ -713,6 +853,232 @@ class UndercoverRoom {
     return null;
   }
 
+  /**
+   * M3: Any alive player may start self-reveal (UI must show for all — anti-leak).
+   */
+  startSelfReveal(playerId) {
+    this.touch();
+    if (!this.config.allowSpySelfReveal) {
+      return { ok: false, error: '本局未开启自爆猜词' };
+    }
+    if (this.phase !== PHASES.SPEAKING && this.phase !== PHASES.VOTING && this.phase !== PHASES.TIE_PK) {
+      return { ok: false, error: '当前阶段无法发起自爆猜词' };
+    }
+    if (this.guessingPlayerId) {
+      return { ok: false, error: '已有玩家正在自爆猜词' };
+    }
+    const player = this.players.find(p => p.id === playerId);
+    if (!player || !player.alive) {
+      return { ok: false, error: '仅存活玩家可发起自爆猜词' };
+    }
+
+    this.pausedPhase = this.phase;
+    this.guessingPlayerId = playerId;
+    this.clearTimer();
+    this.phase = PHASES.SPY_GUESS;
+    this.selfRevealNotice = {
+      playerId: player.id,
+      seat: player.seat,
+      nickname: player.nickname,
+      status: 'guessing',
+      note: `${player.seat}号 ${player.nickname} 发起了自爆猜词，正在输入平民词...`
+    };
+    this.scheduleTimer(15, () => {
+      this.submitSelfRevealGuess(playerId, '', { isTimeout: true });
+    });
+    this.emitUpdate();
+    return { ok: true };
+  }
+
+  submitSelfRevealGuess(playerId, guessWord, { isTimeout = false } = {}) {
+    this.touch();
+    if (this.phase !== PHASES.SPY_GUESS) {
+      return { ok: false, error: '当前不是自爆猜词阶段' };
+    }
+    if (playerId !== this.guessingPlayerId) {
+      return { ok: false, error: '仅发起者可提交猜词' };
+    }
+    const player = this.players.find(p => p.id === playerId);
+    if (!player) return { ok: false, error: '玩家不存在' };
+
+    this.clearTimer();
+    const guess = normalizeGuessWord(guessWord);
+    const civilianWord = this.currentWordPair ? this.currentWordPair.civilianWord : '';
+
+    // Case A: easter egg — reveal and roast the initiator
+    if (this.easterEggType) {
+      this.selfRevealNotice = {
+        playerId: player.id,
+        seat: player.seat,
+        nickname: player.nickname,
+        status: 'egg',
+        note: `${player.seat}号 ${player.nickname} 自爆猜词，惨遭整蛊！`
+      };
+      this.guessingPlayerId = null;
+      this.pausedPhase = null;
+      this.finishGame('EASTER_EGG', this.buildEasterEggReason(`${player.seat}号 ${player.nickname} 自爆猜词惨遭整蛊。`));
+      return { ok: true, result: 'EASTER_EGG' };
+    }
+
+    const isSpy = player.role === ROLES.UNDERCOVER;
+    const correct = guess && guess === normalizeGuessWord(civilianWord);
+
+    // Case B: undercover guesses civilian word correctly -> instant spy win
+    if (isSpy && correct && !isTimeout) {
+      this.selfRevealNotice = {
+        playerId: player.id,
+        seat: player.seat,
+        nickname: player.nickname,
+        status: 'success',
+        note: `${player.seat}号 ${player.nickname} 自爆猜词正确，卧底阵营反杀获胜！`
+      };
+      this.guessingPlayerId = null;
+      this.pausedPhase = null;
+      this.finishGame('UNDERCOVER', `${player.seat}号 ${player.nickname} 主动亮牌猜中平民词「${civilianWord}」，卧底阵营反杀获胜！`);
+      return { ok: true, result: 'SPY_WIN' };
+    }
+
+    // Case C: wrong guess / timeout / civilian mis-reveal -> eliminate initiator
+    player.alive = false;
+    this.scoreGhostNextOutBets(player.id);
+    const failNote = isTimeout
+      ? `${player.seat}号 ${player.nickname} 自爆猜词超时，已出局`
+      : `${player.seat}号 ${player.nickname} 自爆猜词失败已出局`;
+    this.selfRevealNotice = {
+      playerId: player.id,
+      seat: player.seat,
+      nickname: player.nickname,
+      status: 'fail',
+      note: `${failNote}，游戏继续`
+    };
+    this.guessingPlayerId = null;
+    this.pausedPhase = null;
+
+    const outcome = this.checkWinCondition();
+    if (outcome) {
+      this.finishGame(outcome.winner, outcome.reason);
+      return { ok: true, result: 'ELIMINATED_END' };
+    }
+
+    this.advanceToNextRound();
+    return { ok: true, result: 'ELIMINATED_CONTINUE' };
+  }
+
+  /**
+   * M4: Spectator ghost bets (eliminated players only).
+   */
+  placeGhostBet(playerId, betType, target) {
+    this.touch();
+    if (!this.config.enableGhostBet) {
+      return { ok: false, error: '本局未开启观战押注' };
+    }
+    if (this.phase === PHASES.LOBBY || this.phase === PHASES.SETTLEMENT) {
+      return { ok: false, error: '当前阶段不可押注' };
+    }
+    const player = this.players.find(p => p.id === playerId);
+    if (!player) return { ok: false, error: '玩家不存在' };
+    if (player.alive) {
+      return { ok: false, error: '仅已出局玩家可押注' };
+    }
+
+    if (!this.ghostBets[playerId]) {
+      this.ghostBets[playerId] = { finalWinner: null, byRound: {}, score: 0 };
+    }
+    const bet = this.ghostBets[playerId];
+
+    if (betType === 'nextOut') {
+      if (this.phase !== PHASES.SPEAKING && this.phase !== PHASES.VOTING) {
+        return { ok: false, error: '仅发言/投票阶段可押本轮出局' };
+      }
+      const targetPlayer = this.players.find(p => p.id === target);
+      if (!targetPlayer || !targetPlayer.alive) {
+        return { ok: false, error: '押注目标必须是当前存活玩家' };
+      }
+      bet.byRound[this.roundNumber] = targetPlayer.id;
+      this.emitUpdate();
+      return { ok: true, betType: 'nextOut', target: targetPlayer.id, round: this.roundNumber };
+    }
+
+    if (betType === 'winner') {
+      if (bet.finalWinner) {
+        return { ok: false, error: '最终胜方押注已锁定，不可修改' };
+      }
+      if (target !== 'CIVILIAN' && target !== 'UNDERCOVER') {
+        return { ok: false, error: '请选择平民或卧底作为最终胜方' };
+      }
+      bet.finalWinner = target;
+      this.emitUpdate();
+      return { ok: true, betType: 'winner', target };
+    }
+
+    return { ok: false, error: '未知押注类型' };
+  }
+
+  scoreGhostNextOutBets(eliminatedId) {
+    if (!this.config.enableGhostBet || !eliminatedId) return;
+    Object.values(this.ghostBets).forEach((bet) => {
+      if (bet.byRound && bet.byRound[this.roundNumber] === eliminatedId) {
+        bet.score = (bet.score || 0) + 10;
+      }
+    });
+  }
+
+  scoreGhostWinnerBets(winner) {
+    if (!this.config.enableGhostBet) {
+      this.bestSpectator = null;
+      return;
+    }
+    // Easter egg: winner bets neither scored nor penalized; keep nextOut scores
+    if (winner === 'EASTER_EGG') {
+      const hadWinnerBet = Object.values(this.ghostBets).some(b => b.finalWinner);
+      this.bestSpectator = null;
+      this.ghostBetRefundNote = hadWinnerBet
+        ? '彩蛋局揭晓，最终胜方押注不计分（本轮出局押注得分保留）'
+        : null;
+      return;
+    }
+    this.ghostBetRefundNote = null;
+    Object.values(this.ghostBets).forEach((bet) => {
+      if (bet.finalWinner && bet.finalWinner === winner) {
+        bet.score = (bet.score || 0) + 20;
+      }
+    });
+
+    let best = null;
+    let bestScore = 0;
+    let hitCount = 0;
+    for (const [pid, bet] of Object.entries(this.ghostBets)) {
+      if ((bet.score || 0) > bestScore) {
+        bestScore = bet.score || 0;
+        best = pid;
+        hitCount = this.countGhostHits(bet, winner);
+      }
+    }
+    if (best && bestScore > 0) {
+      const p = this.players.find(x => x.id === best);
+      if (p) {
+        this.bestSpectator = {
+          playerId: p.id,
+          seat: p.seat,
+          nickname: p.nickname,
+          score: bestScore,
+          hitCount,
+          label: `观战预言家：${p.seat}号 ${p.nickname}，命中 ${hitCount} 次`
+        };
+      }
+    } else {
+      this.bestSpectator = null;
+    }
+  }
+
+  countGhostHits(bet, winner) {
+    // Derive hits from score: +10 nextOut, +20 winner
+    const score = bet.score || 0;
+    const winnerHit = bet.finalWinner && bet.finalWinner === winner ? 1 : 0;
+    const nextOutHits = Math.max(0, Math.floor((score - winnerHit * 20) / 10));
+    return nextOutHits + winnerHit;
+  }
+
   advanceToNextRound() {
     // Fresh round resets tie chain so a prior abstain/tie cannot skip PK next round
     this.consecutiveTies = 0;
@@ -728,7 +1094,10 @@ class UndercoverRoom {
     this.winner = winner;
     this.winReason = reason;
     this.currentSpeakerId = null;
+    this.guessingPlayerId = null;
+    this.pausedPhase = null;
     this.gameEndedAt = Date.now();
+    this.scoreGhostWinnerBets(winner);
     this.emitUpdate();
   }
 
@@ -845,6 +1214,15 @@ class UndercoverRoom {
     this.pkCandidates = [];
     this.lastVoteSummary = null;
     this.wordFeedbacks = {};
+    this.easterEggType = null;
+    this.completedVoteRounds = 0;
+    this.guessingPlayerId = null;
+    this.pausedPhase = null;
+    this.selfRevealNotice = null;
+    this.ghostBets = {};
+    this.bestSpectator = null;
+    this.ghostBetRefundNote = null;
+    this._forceEasterEggType = null;
     this.gameId = null;
     this.gameStartedAt = null;
     this.gameEndedAt = null;
@@ -873,13 +1251,41 @@ class UndercoverRoom {
 
     const eligibleVoters = this.phase === PHASES.VOTING ? this.getEligibleVoters().map(p => p.id) : [];
 
+    // M1: delayed spy teammate reveal — only after surviving at least one completed vote round
+    // (not merely roundNumber bump from self-reveal fail). Muted in easter egg.
+    const canKnowTeammate = this.config.delayedSpyReveal
+      && this.config.spyCount === 2
+      && this.completedVoteRounds >= 1
+      && viewer
+      && viewer.role === ROLES.UNDERCOVER
+      && viewer.alive
+      && !this.easterEggType
+      && this.phase !== PHASES.LOBBY;
+    const spyTeammates = canKnowTeammate
+      ? this.players
+        .filter(p => p.role === ROLES.UNDERCOVER && p.id !== viewer.id)
+        .map(p => ({ id: p.id, seat: p.seat, nickname: p.nickname, alive: p.alive }))
+      : null;
+
+    const publicConfig = { ...this.config };
+    delete publicConfig._forceEasterEggType;
+
+    const myGhostBet = canSeeAllSecrets && viewer && this.ghostBets[viewer.id]
+      ? {
+          finalWinner: this.ghostBets[viewer.id].finalWinner,
+          byRound: { ...this.ghostBets[viewer.id].byRound },
+          score: this.ghostBets[viewer.id].score || 0,
+          currentRoundBet: this.ghostBets[viewer.id].byRound[this.roundNumber] || null
+        }
+      : null;
+
     return {
       roomCode: this.roomCode,
       phase: this.phase,
       serverNow: Date.now(),
       phaseEndsAt: this.phaseEndsAt,
       hostId: this.hostId,
-      config: this.config,
+      config: publicConfig,
       roundNumber: this.roundNumber,
       speakingSubRound: this.speakingSubRound,
       currentSpeakerId: this.currentSpeakerId,
@@ -890,7 +1296,11 @@ class UndercoverRoom {
       myId: viewer ? viewer.id : null,
       myWord: viewer && this.phase !== PHASES.LOBBY ? viewer.word : null,
       myRole: canSeeAllSecrets && viewer ? viewer.role : null,
+      spyTeammates,
+      guessingPlayerId: this.guessingPlayerId,
+      selfRevealNotice: this.selfRevealNotice,
       wordReveal: canSeeAllSecrets ? this.currentWordPair : null,
+      easterEggType: isSettled ? this.easterEggType : null,
       myWordFeedback: viewer && this.phase === PHASES.SETTLEMENT
         ? (this.wordFeedbacks[viewer.id] || null)
         : null,
@@ -913,6 +1323,10 @@ class UndercoverRoom {
       speeches: this.speeches,
       lastVoteSummary: this.lastVoteSummary,
       ghostMessages: canSeeAllSecrets ? this.ghostMessages : [],
+      ghostBets: canSeeAllSecrets ? this.ghostBets : null,
+      myGhostBet,
+      bestSpectator: isSettled ? this.bestSpectator : null,
+      ghostBetRefundNote: isSettled ? (this.ghostBetRefundNote || null) : null,
       winner: this.winner,
       winReason: this.winReason
     };

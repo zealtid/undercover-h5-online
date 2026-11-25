@@ -191,7 +191,239 @@ function runTests() {
   assert.strictEqual(roomContinue.getWordFeedbackStats().up, 0);
   roomContinue.clearTimer();
 
-  console.log('ALL FSM TESTS PASSED (3p, 6p, taboo, projection, PK, reconnect, abstain-PK, voice-ban, kick, 4p-continue, word-fb)');
+  // ---------- V1.5 M1: delayed spy teammate reveal ----------
+  const roomM1 = new UndercoverRoom('M101');
+  const m1Players = [];
+  for (let i = 1; i <= 6; i++) m1Players.push(roomM1.addPlayer({ nickname: `M1_${i}` }).player);
+  roomM1.updateConfig(m1Players[0].id, { spyCount: 2, delayedSpyReveal: true });
+  m1Players.slice(1).forEach(p => roomM1.toggleReady(p.id));
+  assert.strictEqual(roomM1.startGame(m1Players[0].id).ok, true);
+  const spiesM1 = roomM1.players.filter(p => p.role === ROLES.UNDERCOVER);
+  assert.strictEqual(spiesM1.length, 2);
+  const snapR1 = roomM1.getPlayerSnapshot(spiesM1[0].id);
+  assert.strictEqual(snapR1.spyTeammates, null, 'round1 spyTeammates must be null');
+  const civSnapR1 = roomM1.getPlayerSnapshot(roomM1.players.find(p => p.role === ROLES.CIVILIAN).id);
+  assert.strictEqual(civSnapR1.spyTeammates, null);
+  // Finish speaking + eliminate a civilian -> round 2
+  while (roomM1.phase === PHASES.SPEAKING) {
+    roomM1.submitSpeech(roomM1.currentSpeakerId, { content: `m1-${roomM1.turnIndex}` });
+  }
+  const civVictim = roomM1.players.find(p => p.role === ROLES.CIVILIAN && p.alive);
+  roomM1.players.filter(p => p.id !== civVictim.id).forEach(p => roomM1.castVote(p.id, civVictim.id));
+  roomM1.castVote(civVictim.id, spiesM1[0].id);
+  assert.strictEqual(roomM1.roundNumber, 2);
+  assert.strictEqual(roomM1.phase, PHASES.SPEAKING);
+  const snapR2 = roomM1.getPlayerSnapshot(spiesM1[0].id);
+  assert.ok(Array.isArray(snapR2.spyTeammates) && snapR2.spyTeammates.length === 1);
+  assert.strictEqual(snapR2.spyTeammates[0].id, spiesM1[1].id);
+  const civSnapR2 = roomM1.getPlayerSnapshot(roomM1.players.find(p => p.role === ROLES.CIVILIAN && p.alive).id);
+  assert.strictEqual(civSnapR2.spyTeammates, null);
+  // Teammate field must not appear in public players[]
+  snapR2.players.forEach(p => assert.strictEqual(p.spyTeammates, undefined));
+  roomM1.clearTimer();
+
+  // ---------- V1.5 M2: ALL_SAME easter egg ----------
+  const roomEggSame = new UndercoverRoom('E201');
+  for (let i = 1; i <= 4; i++) roomEggSame.addPlayer({ nickname: `ES${i}` });
+  roomEggSame.updateConfig(roomEggSame.hostId, {
+    easterEggMode: true,
+    easterEggRate: 0.08
+  });
+  roomEggSame._forceEasterEggType = 'ALL_SAME';
+  roomEggSame.players.slice(1).forEach(p => roomEggSame.toggleReady(p.id));
+  assert.strictEqual(roomEggSame.startGame(roomEggSame.hostId).ok, true);
+  assert.strictEqual(roomEggSame.easterEggType, 'ALL_SAME');
+  const wordsSame = roomEggSame.players.map(p => p.word);
+  assert.ok(wordsSame.every(w => w === wordsSame[0]));
+  assert.ok(roomEggSame.players.every(p => p.role === ROLES.CIVILIAN));
+  // Alive snapshots must not leak easterEggType
+  assert.strictEqual(roomEggSame.getPlayerSnapshot(roomEggSame.players[0].id).easterEggType, null);
+  // Complete 2 vote rounds -> EASTER_EGG settlement
+  for (let round = 0; round < 2; round++) {
+    while (roomEggSame.phase === PHASES.SPEAKING) {
+      roomEggSame.submitSpeech(roomEggSame.currentSpeakerId, { content: `eggS${round}-${roomEggSame.turnIndex}` });
+    }
+    assert.strictEqual(roomEggSame.phase, PHASES.VOTING);
+    const alive = roomEggSame.players.filter(p => p.alive);
+    const target = alive[0];
+    alive.filter(p => p.id !== target.id).forEach(p => roomEggSame.castVote(p.id, target.id));
+    roomEggSame.castVote(target.id, alive[1].id);
+  }
+  assert.strictEqual(roomEggSame.phase, PHASES.SETTLEMENT);
+  assert.strictEqual(roomEggSame.winner, 'EASTER_EGG');
+  assert.strictEqual(roomEggSame.getPlayerSnapshot(roomEggSame.players[0].id).easterEggType, 'ALL_SAME');
+  roomEggSame.clearTimer();
+
+  // ---------- V1.5 M2: ALL_DIFFERENT easter egg ----------
+  const roomEggDiff = new UndercoverRoom('E202');
+  for (let i = 1; i <= 5; i++) roomEggDiff.addPlayer({ nickname: `ED${i}` });
+  roomEggDiff.updateConfig(roomEggDiff.hostId, { easterEggMode: true });
+  roomEggDiff._forceEasterEggType = 'ALL_DIFFERENT';
+  roomEggDiff.players.slice(1).forEach(p => roomEggDiff.toggleReady(p.id));
+  assert.strictEqual(roomEggDiff.startGame(roomEggDiff.hostId).ok, true);
+  assert.strictEqual(roomEggDiff.easterEggType, 'ALL_DIFFERENT');
+  assert.strictEqual(new Set(roomEggDiff.players.map(p => p.word)).size, roomEggDiff.players.length);
+  assert.ok(roomEggDiff.players.every(p => p.role === ROLES.UNDERCOVER));
+  // Spy teammate reveal must stay muted in easter egg
+  roomEggDiff.roundNumber = 2;
+  assert.strictEqual(roomEggDiff.getPlayerSnapshot(roomEggDiff.players[0].id).spyTeammates, null);
+  roomEggDiff.clearTimer();
+
+  // ---------- V1.5 M3: spy self-reveal win ----------
+  const roomReveal = new UndercoverRoom('R301');
+  for (let i = 1; i <= 4; i++) roomReveal.addPlayer({ nickname: `R${i}` });
+  roomReveal.players.slice(1).forEach(p => roomReveal.toggleReady(p.id));
+  assert.strictEqual(roomReveal.startGame(roomReveal.hostId).ok, true);
+  const spyR = roomReveal.players.find(p => p.role === ROLES.UNDERCOVER);
+  const civilianWord = roomReveal.currentWordPair.civilianWord;
+  assert.strictEqual(roomReveal.startSelfReveal(spyR.id).ok, true);
+  assert.strictEqual(roomReveal.phase, PHASES.SPY_GUESS);
+  const winRes = roomReveal.submitSelfRevealGuess(spyR.id, `  ${civilianWord}  `);
+  assert.strictEqual(winRes.ok, true);
+  assert.strictEqual(roomReveal.phase, PHASES.SETTLEMENT);
+  assert.strictEqual(roomReveal.winner, 'UNDERCOVER');
+  roomReveal.clearTimer();
+
+  // ---------- V1.5 M3: dual-spy wrong guess continues ----------
+  const roomDualFail = new UndercoverRoom('R302');
+  const dualPs = [];
+  for (let i = 1; i <= 6; i++) dualPs.push(roomDualFail.addPlayer({ nickname: `DF${i}` }).player);
+  roomDualFail.updateConfig(dualPs[0].id, { spyCount: 2 });
+  dualPs.slice(1).forEach(p => roomDualFail.toggleReady(p.id));
+  assert.strictEqual(roomDualFail.startGame(dualPs[0].id).ok, true);
+  const dualSpies = roomDualFail.players.filter(p => p.role === ROLES.UNDERCOVER);
+  assert.strictEqual(roomDualFail.startSelfReveal(dualSpies[0].id).ok, true);
+  assert.strictEqual(roomDualFail.submitSelfRevealGuess(dualSpies[0].id, '绝对不是这个词xyz').ok, true);
+  assert.strictEqual(dualSpies[0].alive, false);
+  assert.strictEqual(dualSpies[1].alive, true);
+  assert.notStrictEqual(roomDualFail.phase, PHASES.SETTLEMENT);
+  assert.strictEqual(roomDualFail.phase, PHASES.SPEAKING);
+  assert.strictEqual(roomDualFail.winner, null);
+  roomDualFail.clearTimer();
+
+  // ---------- V1.5 M3: civilian mis-reveal punished ----------
+  const roomCivBoom = new UndercoverRoom('R303');
+  for (let i = 1; i <= 4; i++) roomCivBoom.addPlayer({ nickname: `CB${i}` });
+  roomCivBoom.players.slice(1).forEach(p => roomCivBoom.toggleReady(p.id));
+  assert.strictEqual(roomCivBoom.startGame(roomCivBoom.hostId).ok, true);
+  const civBoom = roomCivBoom.players.find(p => p.role === ROLES.CIVILIAN);
+  const ownWord = civBoom.word;
+  assert.strictEqual(roomCivBoom.startSelfReveal(civBoom.id).ok, true);
+  assert.strictEqual(roomCivBoom.submitSelfRevealGuess(civBoom.id, ownWord).ok, true);
+  assert.strictEqual(civBoom.alive, false);
+  // Guessing own civilian word as civilian still fails (must be undercover)
+  if (roomCivBoom.phase === PHASES.SETTLEMENT) {
+    // Possible if only 1 spy left and conditions met — or continue
+    assert.ok(roomCivBoom.winner === 'UNDERCOVER' || roomCivBoom.winner === 'CIVILIAN');
+  } else {
+    assert.strictEqual(roomCivBoom.phase, PHASES.SPEAKING);
+  }
+  roomCivBoom.clearTimer();
+
+  // ---------- V1.5 M4: ghost bet isolation + scoring ----------
+  const roomBet = new UndercoverRoom('B401');
+  for (let i = 1; i <= 4; i++) roomBet.addPlayer({ nickname: `B${i}` });
+  roomBet.players.slice(1).forEach(p => roomBet.toggleReady(p.id));
+  assert.strictEqual(roomBet.startGame(roomBet.hostId).ok, true);
+  const aliveBetter = roomBet.players.find(p => p.alive);
+  assert.strictEqual(roomBet.placeGhostBet(aliveBetter.id, 'nextOut', roomBet.players[0].id).ok, false);
+  assert.strictEqual(roomBet.getPlayerSnapshot(aliveBetter.id).ghostBets, null);
+  assert.strictEqual(roomBet.getPlayerSnapshot(aliveBetter.id).myGhostBet, null);
+
+  while (roomBet.phase === PHASES.SPEAKING) {
+    roomBet.submitSpeech(roomBet.currentSpeakerId, { content: `bet-${roomBet.turnIndex}` });
+  }
+  // Eliminate one civilian to create a spectator
+  const spyBet = roomBet.players.find(p => p.role === ROLES.UNDERCOVER);
+  const civsBet = roomBet.players.filter(p => p.role === ROLES.CIVILIAN);
+  const outCiv = civsBet[0];
+  roomBet.players.filter(p => p.id !== outCiv.id).forEach(p => roomBet.castVote(p.id, outCiv.id));
+  roomBet.castVote(outCiv.id, civsBet[1].id);
+  assert.strictEqual(outCiv.alive, false);
+  assert.notStrictEqual(roomBet.phase, PHASES.SETTLEMENT);
+
+  // Spectator places nextOut + winner bets
+  const nextTarget = roomBet.players.find(p => p.alive && p.role === ROLES.CIVILIAN) || roomBet.players.find(p => p.alive);
+  assert.strictEqual(roomBet.placeGhostBet(outCiv.id, 'nextOut', nextTarget.id).ok, true);
+  assert.strictEqual(roomBet.placeGhostBet(outCiv.id, 'winner', 'UNDERCOVER').ok, true);
+  // Locked winner cannot change
+  assert.strictEqual(roomBet.placeGhostBet(outCiv.id, 'winner', 'CIVILIAN').ok, false);
+  const ghostSnap = roomBet.getPlayerSnapshot(outCiv.id);
+  assert.ok(ghostSnap.ghostBets);
+  assert.ok(ghostSnap.myGhostBet);
+  assert.strictEqual(ghostSnap.myGhostBet.finalWinner, 'UNDERCOVER');
+  // Alive still isolated
+  const aliveLeft = roomBet.players.find(p => p.alive);
+  assert.strictEqual(roomBet.getPlayerSnapshot(aliveLeft.id).ghostBets, null);
+
+  // Finish speaking and eliminate nextTarget so nextOut hits; leave spy win path
+  while (roomBet.phase === PHASES.SPEAKING) {
+    roomBet.submitSpeech(roomBet.currentSpeakerId, { content: `bet2-${roomBet.turnIndex}` });
+  }
+  const aliveNowBet = roomBet.players.filter(p => p.alive);
+  aliveNowBet.filter(p => p.id !== nextTarget.id).forEach(p => roomBet.castVote(p.id, nextTarget.id));
+  roomBet.castVote(nextTarget.id, spyBet.id);
+  // After 2nd civilian out in 4p: 2 alive with 1 spy -> undercover wins
+  assert.strictEqual(roomBet.phase, PHASES.SETTLEMENT);
+  assert.strictEqual(roomBet.winner, 'UNDERCOVER');
+  assert.strictEqual(roomBet.ghostBets[outCiv.id].score, 30);
+  assert.ok(roomBet.bestSpectator);
+  assert.strictEqual(roomBet.bestSpectator.playerId, outCiv.id);
+  roomBet.clearTimer();
+
+  // ---------- Bug regressions ----------
+  // Self-reveal in round 1 must NOT unlock spy teammates (requires a completed vote round)
+  const roomBugA = new UndercoverRoom('BUGA');
+  const bugAPs = [];
+  for (let i = 1; i <= 6; i++) bugAPs.push(roomBugA.addPlayer({ nickname: `BA${i}` }).player);
+  roomBugA.updateConfig(bugAPs[0].id, { spyCount: 2 });
+  bugAPs.slice(1).forEach(p => roomBugA.toggleReady(p.id));
+  assert.strictEqual(roomBugA.startGame(bugAPs[0].id).ok, true);
+  const bugASpies = roomBugA.players.filter(p => p.role === ROLES.UNDERCOVER);
+  const bugACiv = roomBugA.players.find(p => p.role === ROLES.CIVILIAN);
+  assert.strictEqual(roomBugA.startSelfReveal(bugACiv.id).ok, true);
+  assert.strictEqual(roomBugA.submitSelfRevealGuess(bugACiv.id, 'wrong').ok, true);
+  assert.ok(roomBugA.roundNumber >= 2);
+  assert.strictEqual(roomBugA.completedVoteRounds, 0);
+  assert.strictEqual(roomBugA.getPlayerSnapshot(bugASpies[0].id).spyTeammates, null);
+  roomBugA.clearTimer();
+
+  // Client config must not force easter egg type; only room._forceEasterEggType (tests) works
+  const roomBugB = new UndercoverRoom('BUGB');
+  for (let i = 1; i <= 3; i++) roomBugB.addPlayer({ nickname: `BB${i}` });
+  roomBugB.updateConfig(roomBugB.hostId, {
+    easterEggMode: true,
+    _forceEasterEggType: 'ALL_SAME'
+  });
+  assert.strictEqual(roomBugB.config._forceEasterEggType, undefined);
+  roomBugB.players.slice(1).forEach(p => roomBugB.toggleReady(p.id));
+  roomBugB._forceEasterEggType = 'ALL_DIFFERENT';
+  assert.strictEqual(roomBugB.startGame(roomBugB.hostId).ok, true);
+  assert.strictEqual(roomBugB.easterEggType, 'ALL_DIFFERENT');
+  roomBugB.clearTimer();
+
+  // Self-reveal elimination must score ghost nextOut bets
+  const roomBugC = new UndercoverRoom('BUGC');
+  for (let i = 1; i <= 4; i++) roomBugC.addPlayer({ nickname: `BC${i}` });
+  roomBugC.players.slice(1).forEach(p => roomBugC.toggleReady(p.id));
+  assert.strictEqual(roomBugC.startGame(roomBugC.hostId).ok, true);
+  while (roomBugC.phase === PHASES.SPEAKING) {
+    roomBugC.submitSpeech(roomBugC.currentSpeakerId, { content: `bc${roomBugC.turnIndex}` });
+  }
+  const bugCSpy = roomBugC.players.find(p => p.role === ROLES.UNDERCOVER);
+  const bugCCivs = roomBugC.players.filter(p => p.role === ROLES.CIVILIAN);
+  const bugCOut = bugCCivs[0];
+  roomBugC.players.filter(p => p.id !== bugCOut.id).forEach(p => roomBugC.castVote(p.id, bugCOut.id));
+  roomBugC.castVote(bugCOut.id, bugCCivs[1].id);
+  const bugCTarget = roomBugC.players.find(p => p.alive && p.role === ROLES.CIVILIAN);
+  assert.strictEqual(roomBugC.placeGhostBet(bugCOut.id, 'nextOut', bugCTarget.id).ok, true);
+  assert.strictEqual(roomBugC.startSelfReveal(bugCTarget.id).ok, true);
+  assert.strictEqual(roomBugC.submitSelfRevealGuess(bugCTarget.id, 'nope').ok, true);
+  assert.strictEqual(bugCTarget.alive, false);
+  assert.strictEqual(roomBugC.ghostBets[bugCOut.id].score, 10);
+  roomBugC.clearTimer();
+
+  console.log('ALL FSM TESTS PASSED (3p, 6p, taboo, projection, PK, reconnect, abstain-PK, voice-ban, kick, 4p-continue, word-fb, M1-M4, bugfixes)');
 }
 
 runTests();

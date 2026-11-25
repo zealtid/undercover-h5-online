@@ -274,6 +274,15 @@ function handleMessage(socket, rawText) {
     case 'ghost:chat':
       res = room.sendGhostMessage(meta.playerId, msg.content || '');
       break;
+    case 'game:self_reveal_start':
+      res = room.startSelfReveal(meta.playerId);
+      break;
+    case 'game:self_reveal_guess':
+      res = room.submitSelfRevealGuess(meta.playerId, msg.guessWord || '');
+      break;
+    case 'ghost:place_bet':
+      res = room.placeGhostBet(meta.playerId, msg.betType, msg.target);
+      break;
     case 'game:reset':
       res = room.resetToLobby(meta.playerId);
       break;

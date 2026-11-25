@@ -67,7 +67,9 @@
       prevSpeakerId: null,
       prevEliminatedId: null,
       prevWinner: null,
-      speechCount: 0
+      speechCount: 0,
+      spyTeammateToastKey: '',
+      ghostBetCollapsed: false
     };
 
     function acceptNickname(raw) {
@@ -412,7 +414,8 @@
         if (phase === 'SPEAKING' || phase === 'TIE_PK') sfx.phase();
         else if (phase === 'VOTING') sfx.vote();
         else if (phase === 'SETTLEMENT') {
-          if (winner === 'CIVILIAN' || winner === 'UNDERCOVER') {
+          if (winner === 'EASTER_EGG') sfx.win();
+          else if (winner === 'CIVILIAN' || winner === 'UNDERCOVER') {
             const me = s.players.find(p => p.id === s.myId);
             const iAmSpy = me && (me.role === 'UNDERCOVER' || me.role === 'BLANK');
             const iWin = (winner === 'UNDERCOVER' && iAmSpy) || (winner === 'CIVILIAN' && me && !iAmSpy);
@@ -431,6 +434,16 @@
       if (Array.isArray(s.speeches) && s.speeches.length > state.speechCount) {
         if (state.speechCount > 0) sfx.speech();
         state.speechCount = s.speeches.length;
+      }
+
+      // M1: toast once when spy teammates first appear
+      if (Array.isArray(s.spyTeammates) && s.spyTeammates.length > 0) {
+        const key = `${s.roomCode}:${s.roundNumber}:${s.spyTeammates.map(t => t.id).join(',')}`;
+        if (key !== state.spyTeammateToastKey) {
+          state.spyTeammateToastKey = key;
+          const names = s.spyTeammates.map(t => `${t.seat}号 ${t.nickname}${t.alive ? '' : '（已出局）'}`).join('、');
+          showToast(`密电：你的卧底队友是 ${names}`, true);
+        }
       }
 
       state.prevPhase = phase;
@@ -561,7 +574,10 @@
             <button id="btn-create" class="w-full py-3 rounded-xl bg-transparent border border-slate-600 text-slate-300 hover:border-slate-400 hover:text-white text-sm font-medium transition">创建新房间</button>
           </div>
 
-          <p class="text-center text-xs text-slate-500 mt-auto pt-8">${state.connected ? '● 已连接联机服务' : '○ 正在连接服务...'}</p>
+          <p class="mt-auto pt-8 flex items-center justify-center gap-1.5 text-xs ${state.connected ? 'text-emerald-400' : 'text-slate-500'}">
+            <span class="online-dot ${state.connected ? 'is-on' : 'is-off'}" aria-hidden="true"></span>
+            <span>${state.connected ? '已连接联机服务' : '正在连接服务...'}</span>
+          </p>
         </div>
       `;
     }
@@ -629,6 +645,22 @@
                 ${state.categories.map(c => `<option value="${c}" ${s.config.category === c ? 'selected' : ''}>${c}</option>`).join('')}
               </select>
             </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">彩蛋局（约 8% 概率）</span>
+              <button ${!isHost ? 'disabled' : ''} id="btn-cfg-egg" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.easterEggMode ? 'bg-fuchsia-500 text-white' : 'bg-slate-800 text-slate-400'}">${s.config.easterEggMode ? '已开启' : '关闭'}</button>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">双卧底延迟互认</span>
+              <button ${!isHost || !can2Spy ? 'disabled' : ''} id="btn-cfg-delayed" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.delayedSpyReveal !== false ? 'bg-teal-500 text-slate-950' : 'bg-slate-800 text-slate-400'} ${!can2Spy ? 'opacity-40' : ''}">${s.config.delayedSpyReveal !== false ? '开启' : '关闭'}${can2Spy ? '' : '(需2卧底)'}</button>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">卧底自爆猜词</span>
+              <button ${!isHost ? 'disabled' : ''} id="btn-cfg-selfreveal" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.allowSpySelfReveal !== false ? 'bg-rose-500 text-white' : 'bg-slate-800 text-slate-400'}">${s.config.allowSpySelfReveal !== false ? '开启' : '关闭'}</button>
+            </div>
+            <div class="flex items-center justify-between text-sm">
+              <span class="text-slate-400">观战上帝押注</span>
+              <button ${!isHost ? 'disabled' : ''} id="btn-cfg-ghostbet" class="px-3 py-1 rounded-lg text-xs font-semibold ${s.config.enableGhostBet !== false ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-400'}">${s.config.enableGhostBet !== false ? '开启' : '关闭'}</button>
+            </div>
           </div>
         </div>
 
@@ -648,13 +680,26 @@
       const isGhost = me && !me.alive && s.phase !== 'SETTLEMENT';
       const speaker = s.players.find(p => p.id === s.currentSpeakerId);
       const remain = getRemainSec();
+      const canSelfReveal = s.config && s.config.allowSpySelfReveal !== false
+        && me && me.alive
+        && (s.phase === 'SPEAKING' || s.phase === 'VOTING' || s.phase === 'TIE_PK');
+      const isGuessing = s.phase === 'SPY_GUESS';
+      const iAmGuesser = isGuessing && s.guessingPlayerId === s.myId;
+      const spyMateLine = Array.isArray(s.spyTeammates) && s.spyTeammates.length
+        ? s.spyTeammates.map(t => `${t.seat}号 ${t.nickname}${t.alive ? '' : '（已出局）'}`).join('、')
+        : '';
 
       const phaseLabel = {
         SPEAKING: `第 ${s.roundNumber} 轮发言${s.players.length === 3 ? ` (${s.speakingSubRound}/2)` : ''}`,
         TIE_PK: '平票 PK 发言',
         VOTING: `第 ${s.roundNumber} 轮投票`,
+        SPY_GUESS: '自爆猜词',
         SETTLEMENT: '对局结算'
       }[s.phase] || s.phase;
+
+      const settlementTitle = s.winner === 'EASTER_EGG'
+        ? '彩蛋局揭晓'
+        : (s.winner === 'CIVILIAN' ? '平民阵营获胜' : '卧底阵营获胜');
 
       return `
         <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
@@ -663,6 +708,7 @@
             <span class="text-xs text-slate-400 font-mono">#${s.roomCode}</span>
           </div>
           <div class="flex items-center gap-2">
+            ${canSelfReveal ? `<button id="btn-self-reveal" class="px-2 py-1 rounded-lg bg-rose-500/20 border border-rose-500/50 text-rose-200 text-[11px] font-semibold">自爆猜词</button>` : ''}
             ${soundToggleBtn()}
             <span id="timer-badge" class="text-sm font-mono font-bold text-amber-400">${remain !== null ? remain + 's' : ''}</span>
           </div>
@@ -677,6 +723,12 @@
           </div>
           <button id="btn-toggle-word" class="px-3 py-1.5 rounded-lg bg-slate-800 text-xs text-slate-300 border border-slate-700">${state.wordHidden ? '显示词语' : '隐藏防窥'}</button>
         </div>
+
+        ${spyMateLine ? `
+          <div class="px-4 py-2 bg-slate-950 border-b border-slate-800">
+            <div class="text-xs text-slate-300 font-mono tracking-wide">密电：你的卧底队友是 ${spyMateLine}</div>
+          </div>
+        ` : ''}
 
         <div class="px-4 py-2.5 border-b border-slate-800 flex gap-2 overflow-x-auto">
           ${s.players.map(p => {
@@ -701,16 +753,25 @@
           ${s.lastVoteSummary ? `<div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200">${s.lastVoteSummary.note}</div>` : ''}
 
           ${s.phase === 'SETTLEMENT' ? `
-            <div class="p-5 rounded-2xl bg-gradient-to-br from-teal-900/50 to-slate-800 border border-teal-500/40 text-center space-y-3">
-              <div class="text-2xl font-extrabold text-white">${s.winner === 'CIVILIAN' ? '平民阵营获胜' : '卧底阵营获胜'}</div>
-              <p class="text-sm text-teal-200">${s.winReason}</p>
-              <div class="grid grid-cols-2 gap-2 pt-2 text-xs">
-                <div class="p-2.5 rounded-xl bg-slate-900/70"><div class="text-slate-400">平民词</div><div class="text-base font-bold text-teal-300 mt-0.5">${s.wordReveal ? s.wordReveal.civilianWord : ''}</div></div>
-                <div class="p-2.5 rounded-xl bg-slate-900/70"><div class="text-slate-400">卧底词</div><div class="text-base font-bold text-amber-300 mt-0.5">${s.wordReveal ? s.wordReveal.undercoverWord : ''}</div></div>
-              </div>
+            <div class="p-5 rounded-2xl bg-gradient-to-br ${s.winner === 'EASTER_EGG' ? 'from-fuchsia-900/50 to-slate-800 border-fuchsia-500/40' : 'from-teal-900/50 to-slate-800 border-teal-500/40'} border text-center space-y-3">
+              <div class="text-2xl font-extrabold text-white">${settlementTitle}</div>
+              <p class="text-sm ${s.winner === 'EASTER_EGG' ? 'text-fuchsia-200' : 'text-teal-200'}">${s.winReason}</p>
+              ${s.winner === 'EASTER_EGG' ? `
+                <div class="p-3 rounded-xl bg-fuchsia-500/10 border border-fuchsia-500/30 text-xs text-fuchsia-100">
+                  ${s.easterEggType === 'ALL_SAME' ? '本局彩蛋类型：全员相同词' : '本局彩蛋类型：全员不同词'}
+                </div>
+              ` : `
+                <div class="grid grid-cols-2 gap-2 pt-2 text-xs">
+                  <div class="p-2.5 rounded-xl bg-slate-900/70"><div class="text-slate-400">平民词</div><div class="text-base font-bold text-teal-300 mt-0.5">${s.wordReveal ? s.wordReveal.civilianWord : ''}</div></div>
+                  <div class="p-2.5 rounded-xl bg-slate-900/70"><div class="text-slate-400">卧底词</div><div class="text-base font-bold text-amber-300 mt-0.5">${s.wordReveal ? s.wordReveal.undercoverWord : ''}</div></div>
+                </div>
+              `}
               <div class="text-left pt-2 space-y-1.5">
-                ${s.players.map(p => `<div class="flex justify-between text-xs px-2 py-1 rounded bg-slate-900/50"><span>${p.seat}号 ${p.nickname}</span><span class="${p.role === 'UNDERCOVER' ? 'text-amber-400 font-bold' : (p.role === 'BLANK' ? 'text-indigo-300' : 'text-teal-300')}">${p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')} · ${p.word || '无词'}</span></div>`).join('')}
+                ${s.players.map(p => `<div class="flex justify-between text-xs px-2 py-1 rounded bg-slate-900/50"><span>${p.seat}号 ${p.nickname}</span><span class="${p.role === 'UNDERCOVER' ? 'text-amber-400 font-bold' : (p.role === 'BLANK' ? 'text-indigo-300' : 'text-teal-300')}">${s.winner === 'EASTER_EGG' ? (p.word || '无词') : `${p.role === 'UNDERCOVER' ? '卧底' : (p.role === 'BLANK' ? '白板' : '平民')} · ${p.word || '无词'}`}</span></div>`).join('')}
               </div>
+              ${s.bestSpectator ? `<div class="p-2.5 rounded-xl bg-indigo-500/15 border border-indigo-400/40 text-xs text-indigo-100">${s.bestSpectator.label}</div>` : ''}
+              ${s.ghostBetRefundNote ? `<div class="p-2.5 rounded-xl bg-slate-900/70 border border-slate-600 text-xs text-slate-300">${s.ghostBetRefundNote}</div>` : ''}
+              ${s.winner !== 'EASTER_EGG' ? `
               <div class="pt-3 mt-1 border-t border-teal-500/20">
                 <div class="text-xs text-slate-400 mb-2">这组词好玩吗？给词库一点反馈</div>
                 <div class="flex gap-2 justify-center">
@@ -723,7 +784,25 @@
                 </div>
                 ${s.myWordFeedback ? `<p class="text-[11px] text-slate-500 mt-2">已记录你的反馈${s.myWordFeedback === 'up' ? '（赞）' : '（踩）'}，可改选</p>` : `<p class="text-[11px] text-slate-500 mt-2">每人可评一次，可改选</p>`}
               </div>
+              ` : ''}
             </div>
+          ` : ''}
+
+          ${isGuessing ? `
+            <div class="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 space-y-3 text-center">
+              <div class="text-sm font-bold text-rose-100">${s.selfRevealNotice ? s.selfRevealNotice.note : '有人正在自爆猜词...'}</div>
+              <div class="text-3xl font-mono font-extrabold text-amber-300">${remain !== null ? remain + 's' : '15s'}</div>
+              ${iAmGuesser ? `
+                <div class="flex gap-2">
+                  <input id="inp-guess-word" type="text" maxlength="20" placeholder="输入你猜的平民词" class="flex-1 px-3 py-2.5 rounded-xl bg-slate-900 border border-rose-400 text-sm text-white focus:outline-none" />
+                  <button id="btn-submit-guess" class="px-4 py-2.5 rounded-xl bg-rose-500 text-white text-sm font-bold shrink-0">提交</button>
+                </div>
+              ` : `<p class="text-xs text-rose-200/80">全员屏息等待结果...</p>`}
+            </div>
+          ` : ''}
+
+          ${s.selfRevealNotice && !isGuessing && s.phase !== 'SETTLEMENT' ? `
+            <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-100">${s.selfRevealNotice.note}</div>
           ` : ''}
 
           ${s.phase === 'VOTING' ? `
@@ -763,6 +842,29 @@
           ` : `
             <div class="space-y-2">
               <div class="text-xs text-indigo-300 bg-indigo-500/10 p-2.5 rounded-xl">你已出局，当前为上帝视角：平民词「${s.wordReveal ? s.wordReveal.civilianWord : ''}」/ 卧底词「${s.wordReveal ? s.wordReveal.undercoverWord : ''}」。存活玩家看不到此频道。</div>
+              ${s.config && s.config.enableGhostBet !== false ? `
+                <div class="rounded-xl border border-indigo-700/60 bg-indigo-950/40 overflow-hidden">
+                  <button id="btn-toggle-bet" class="w-full px-3 py-2 flex items-center justify-between text-xs text-indigo-200">
+                    <span>上帝押注 · 得分 ${s.myGhostBet ? s.myGhostBet.score : 0}</span>
+                    <span>${state.ghostBetCollapsed ? '展开' : '收起'}</span>
+                  </button>
+                  ${!state.ghostBetCollapsed ? `
+                    <div class="px-3 pb-3 space-y-2 border-t border-indigo-800/50 pt-2">
+                      <div class="text-[11px] text-indigo-300/80">押本轮出局（发言/投票阶段可改）</div>
+                      <select id="sel-bet-nextout" class="w-full bg-slate-900 border border-indigo-700 rounded-lg px-2 py-1.5 text-xs text-slate-100">
+                        <option value="">选择存活玩家...</option>
+                        ${s.players.filter(p => p.alive).map(p => `<option value="${p.id}" ${s.myGhostBet && s.myGhostBet.currentRoundBet === p.id ? 'selected' : ''}>${p.seat}号 ${p.nickname}</option>`).join('')}
+                      </select>
+                      <div class="text-[11px] text-indigo-300/80">押最终胜方（仅一次，锁定后不可改）</div>
+                      <div class="flex gap-2">
+                        <button data-bet-winner="CIVILIAN" ${s.myGhostBet && s.myGhostBet.finalWinner ? 'disabled' : ''} class="flex-1 py-1.5 rounded-lg text-xs font-semibold ${s.myGhostBet && s.myGhostBet.finalWinner === 'CIVILIAN' ? 'bg-teal-500 text-slate-950' : 'bg-slate-900 text-slate-300 border border-slate-700'}">平民</button>
+                        <button data-bet-winner="UNDERCOVER" ${s.myGhostBet && s.myGhostBet.finalWinner ? 'disabled' : ''} class="flex-1 py-1.5 rounded-lg text-xs font-semibold ${s.myGhostBet && s.myGhostBet.finalWinner === 'UNDERCOVER' ? 'bg-amber-500 text-slate-950' : 'bg-slate-900 text-slate-300 border border-slate-700'}">卧底</button>
+                      </div>
+                      ${s.myGhostBet && s.myGhostBet.finalWinner ? `<p class="text-[10px] text-indigo-400">已锁定胜方：${s.myGhostBet.finalWinner === 'CIVILIAN' ? '平民' : '卧底'}</p>` : ''}
+                    </div>
+                  ` : ''}
+                </div>
+              ` : ''}
               ${s.ghostMessages.map(gm => `<div class="p-2.5 rounded-xl bg-indigo-950/50 border border-indigo-800/50 text-sm"><span class="text-indigo-300 text-xs font-semibold">${gm.seat}号 ${gm.nickname}：</span>${gm.content}</div>`).join('')}
             </div>
           `}
@@ -863,6 +965,14 @@
         if (blankBtn) blankBtn.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { blankCount: s.config.blankCount === 1 ? 0 : 1 } }); });
         const catSel = document.getElementById('sel-cat');
         if (catSel) catSel.addEventListener('change', e => send({ type: 'room:config', config: { category: e.target.value } }));
+        const eggBtn = document.getElementById('btn-cfg-egg');
+        if (eggBtn) eggBtn.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { easterEggMode: !s.config.easterEggMode } }); });
+        const delayedBtn = document.getElementById('btn-cfg-delayed');
+        if (delayedBtn) delayedBtn.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { delayedSpyReveal: s.config.delayedSpyReveal === false } }); });
+        const selfRevealCfg = document.getElementById('btn-cfg-selfreveal');
+        if (selfRevealCfg) selfRevealCfg.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { allowSpySelfReveal: s.config.allowSpySelfReveal === false } }); });
+        const ghostBetCfg = document.getElementById('btn-cfg-ghostbet');
+        if (ghostBetCfg) ghostBetCfg.addEventListener('click', () => { sfx.click(); send({ type: 'room:config', config: { enableGhostBet: s.config.enableGhostBet === false } }); });
         const startBtn = document.getElementById('btn-start');
         if (startBtn) {
           const offlineCount = s.players.filter(p => !p.online).length;
@@ -907,6 +1017,40 @@
           ghostBtn.addEventListener('click', doGhost);
           ghostInp.addEventListener('keydown', e => { if (e.key === 'Enter') doGhost(); });
         }
+        const selfRevealBtn = document.getElementById('btn-self-reveal');
+        if (selfRevealBtn) {
+          selfRevealBtn.addEventListener('click', () => {
+            sfx.click();
+            if (!window.confirm('确认亮牌猜平民词？猜错或你是平民将直接出局')) return;
+            send({ type: 'game:self_reveal_start' });
+          });
+        }
+        const submitGuessBtn = document.getElementById('btn-submit-guess');
+        const guessInp = document.getElementById('inp-guess-word');
+        if (submitGuessBtn && guessInp) {
+          const doGuess = () => {
+            const word = guessInp.value.trim();
+            if (!word) return showToast('请输入平民词');
+            send({ type: 'game:self_reveal_guess', guessWord: word });
+          };
+          submitGuessBtn.addEventListener('click', doGuess);
+          guessInp.addEventListener('keydown', e => { if (e.key === 'Enter') doGuess(); });
+        }
+        const toggleBet = document.getElementById('btn-toggle-bet');
+        if (toggleBet) toggleBet.addEventListener('click', () => { state.ghostBetCollapsed = !state.ghostBetCollapsed; render(); });
+        const betNext = document.getElementById('sel-bet-nextout');
+        if (betNext) {
+          betNext.addEventListener('change', e => {
+            if (!e.target.value) return;
+            send({ type: 'ghost:place_bet', betType: 'nextOut', target: e.target.value });
+          });
+        }
+        app.querySelectorAll('[data-bet-winner]').forEach(b => {
+          b.addEventListener('click', () => {
+            sfx.click();
+            send({ type: 'ghost:place_bet', betType: 'winner', target: b.dataset.betWinner });
+          });
+        });
         const resetBtn = document.getElementById('btn-reset');
         if (resetBtn) resetBtn.addEventListener('click', () => { sfx.click(); send({ type: 'game:reset' }); });
       }
